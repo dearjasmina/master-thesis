@@ -1,2 +1,46 @@
 thesis_todo_tracker.md
-venv
+venv/
+
+# ── Large data (too large) ─────────────
+data/raw/
+data/processed/
+data/renders/
+
+# ── Model checkpoints (large binaries, should be on cluster storage)
+models/
+
+# ── 3DGS cloned repo ─────────────────────────────────────────────────────────
+gaussian-splatting/
+
+# ── Mitsuba / rendering intermediates ────────────────────────────────────────
+*.vol
+*.exr
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Training run artifacts ───────────────────────────────────────────────────
+wandb/
+runs/
+outputs/
+*.log
+
+# ── Environment / secrets ────────────────────────────────────────────────────
+.env
+.env.*
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
