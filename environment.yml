@@ -46,6 +46,7 @@ dependencies:
     - accelerate>=0.30
     - datasets>=2.19
     - huggingface-hub>=1.0
+    - ip-adapter        
 
     # ── CUDA-only (cluster) — comment out for CPU setup ─────────────────────
     - xformers            # CUDA only; omit on CPU machines

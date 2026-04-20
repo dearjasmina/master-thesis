@@ -13,6 +13,7 @@ transformers>=5.5
 accelerate>=0.30
 datasets>=2.19
 huggingface-hub>=1.0
+ip-adapter            
 
 # ── Evaluation metrics ───────────────────────────────────────────────────────
 lpips>=0.1.4
