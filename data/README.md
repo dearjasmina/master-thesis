@@ -34,14 +34,11 @@ transmission-cli '/Users/jasminavulovic/Downloads/qure.headct.study-47e9d8aab761
 
 ### Unzip + convert one volume (run as each .zip completes)
 ```bash
-# Unzip a single volume
-unzip data/raw/cq500/qure.headct.study/CQ500-CT-0.zip -d data/raw/cq500/qure.headct.study/
+# Unzip all of them
+for zip in data/raw/cq500/qure.headct.study/*.zip; do echo "Extracting $zip..."; unzip -q "$zip" -d data/raw/cq500/qure.headct.study/; done
 
-# Convert to NIfTI
-source venv/bin/activate
-python scripts/dicom_to_nifti.py \
-    --input  data/raw/cq500/qure.headct.study/CQ500-CT-0/ \
-    --output data/raw/cq500_nifti/
+# Convert to NIfTI (all of them )
+source venv/bin/activate && python scripts/dicom_to_nifti.py --input data/raw/cq500/qure.headct.study/ --output data/raw/cq500_nifti/
 
 # Visualise
 python scripts/visualise_volume.py data/raw/cq500_nifti/CQ500-CT-0.nii.gz

@@ -26,13 +26,16 @@ def main():
 
     print(f"Loading {path.name} ...")
     img  = nib.load(str(path))
+    # extracts just the 3D numpy array of HU values — this is the (512, 512, 36) grid
     data = img.get_fdata(dtype=np.float32)
+    # pulls the spacing values from the header — the (0.564, 0.564, 5.176) mm per voxel
     spacing = img.header.get_zooms()[:3]
 
     print(f"  Shape  : {data.shape}")
     print(f"  Spacing: {tuple(f'{s:.3f}mm' for s in spacing)}")
     print(f"  HU min : {data.min():.1f}  max: {data.max():.1f}  mean: {data.mean():.1f}")
 
+    # just get middle index
     cx, cy, cz = (s // 2 for s in data.shape)
     vmin, vmax = np.percentile(data, 1), np.percentile(data, 99)
 
