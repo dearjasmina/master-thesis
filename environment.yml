@@ -1,0 +1,71 @@
+name: thesis-ct
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+
+  # ── PyTorch (CUDA — cluster default) ────────────────────────────────────────
+  # For CPU-only: remove pytorch-cuda and change pytorch/torchvision to their
+  # cpuonly builds, or install via pip with --index-url .../whl/cpu
+  - pytorch::pytorch>=2.1
+  - pytorch::torchvision>=0.16
+  - pytorch::pytorch-cuda=11.8   # change to 12.1 if cluster has CUDA 12
+
+  # ── Scientific computing ─────────────────────────────────────────────────────
+  - numpy>=1.26
+  - scipy>=1.13
+  - scikit-image>=0.22
+  - scikit-learn>=1.4
+  - matplotlib>=3.8
+  - pillow>=10
+  - opencv>=4.10        # >=4.10 required for NumPy 2.x compatibility
+
+  # ── Notebooks ────────────────────────────────────────────────────────────────
+  - jupyter
+  - ipykernel
+
+  - pip:
+    # ── Volume rendering / medical imaging ──────────────────────────────────
+    - pyvista[all]>=0.47
+    - nibabel>=5.2
+    - SimpleITK>=2.3
+    - pydicom>=2.4
+
+    # ── Mitsuba 3 ────────────────────────────────────────────────────────────
+    # Local variant: llvm_ad_rgb  |  Cluster variant: cuda_rgb
+    - mitsuba>=3.5
+
+    # ── Diffusion / training ─────────────────────────────────────────────────
+    - diffusers>=0.37
+    - transformers>=5.5
+    - accelerate>=0.30
+    - datasets>=2.19
+    - huggingface-hub>=1.0
+
+    # ── CUDA-only (cluster) — comment out for CPU setup ─────────────────────
+    - xformers            # CUDA only; omit on CPU machines
+
+    # ── Evaluation metrics ───────────────────────────────────────────────────
+    - lpips>=0.1.4
+    - clean-fid>=0.1.35
+    - pyiqa>=0.1.15
+    - scikit-image>=0.22  # also listed in conda above for binary deps
+
+    # ── Image / video utils ──────────────────────────────────────────────────
+    - imageio>=2.34
+    - imageio-ffmpeg>=0.5
+
+    # ── Training utils ───────────────────────────────────────────────────────
+    - einops>=0.7
+    - omegaconf>=2.3
+    - pyyaml>=6.0
+    - tqdm>=4.66
+
+    # ── Intel OIDN denoiser ──────────────────────────────────────────────────
+    # Not on PyPI — build from source on cluster:
+    #   git clone https://github.com/RenderKit/oidn && cmake + make install

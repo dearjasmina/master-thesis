@@ -1,0 +1,46 @@
+# ── Medical imaging ──────────────────────────────────────────────────────────
+nibabel>=5.2
+SimpleITK>=2.3
+pydicom>=2.4
+
+# ── Volume rendering ─────────────────────────────────────────────────────────
+pyvista[all]>=0.47
+mitsuba>=3.5
+
+# ── Diffusion / training ─────────────────────────────────────────────────────
+diffusers>=0.37
+transformers>=5.5
+accelerate>=0.30
+datasets>=2.19
+huggingface-hub>=1.0
+
+# ── Evaluation metrics ───────────────────────────────────────────────────────
+lpips>=0.1.4
+clean-fid>=0.1.35
+pyiqa>=0.1.15
+scikit-image>=0.22
+scikit-learn>=1.4
+scipy>=1.13
+
+# ── Image / video / visualisation ────────────────────────────────────────────
+opencv-python>=4.10       # 4.10+ required for NumPy 2.x compatibility
+imageio>=2.34
+imageio-ffmpeg>=0.5
+pillow>=10
+matplotlib>=3.8
+
+# ── Training utils ───────────────────────────────────────────────────────────
+einops>=0.7
+omegaconf>=2.3
+pyyaml>=6.0
+tqdm>=4.66
+
+# ── PyTorch ──────────────────────────────────────────────────────────────────
+# Handled by setup.sh — picks the right index automatically.
+# Manual install:
+#   CPU:  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   CUDA: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# ── Cluster-only (not installed by setup.sh on CPU machines) ─────────────────
+# xformers       — CUDA only:  pip install xformers
+# openimagedenoise — not on PyPI; build from https://github.com/RenderKit/oidn
