@@ -1,0 +1,57 @@
+{
+  "device": "mps",
+  "interactive_fps": 30,
+  "interactive_ms": 33.0,
+  "realtime_fps": 100,
+  "realtime_ms": 10.0,
+  "results": [
+    {
+      "mean_s": 25.79675795867418,
+      "std_s": 0.12318034018516193,
+      "min_s": 25.69846312503796,
+      "max_s": 25.97045933397021,
+      "n_runs": 3,
+      "steps": 20,
+      "label": "SD1.5 + ControlNet"
+    },
+    {
+      "mean_s": 68.81767831967834,
+      "std_s": 8.929601802317885,
+      "min_s": 61.549828250019345,
+      "max_s": 81.39534133399138,
+      "n_runs": 3,
+      "steps": 50,
+      "label": "SD1.5 + ControlNet"
+    },
+    {
+      "label": "IP-Adapter + ControlNet",
+      "steps": 20,
+      "mean_s": 616.32,
+      "std_s": 279.8745890573133,
+      "min_s": 64.7,
+      "max_s": 841.3,
+      "n_runs": 5,
+      "note": "Reused from 1.5.4 (5 scale runs @ 20 steps)"
+    },
+    {
+      "label": "Luma Ray 2 (cloud)",
+      "steps": 0,
+      "mean_s": 30.0,
+      "std_s": 0.0,
+      "min_s": 30.0,
+      "max_s": 30.0,
+      "n_runs": 1,
+      "note": "Cloud API; latency includes network + generation; manual estimate ~30s"
+    },
+    {
+      "label": "3DGS (real-time target)",
+      "steps": 0,
+      "mean_s": 0.01,
+      "std_s": 0.0,
+      "min_s": 0.01,
+      "max_s": 0.01,
+      "n_runs": 0,
+      "note": "Literature value: \u2265100 FPS @ 1080p on RTX 3090 (Kerbl et al., SIGGRAPH 2023)"
+    }
+  ]
+}
