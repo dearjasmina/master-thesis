@@ -1,23 +1,21 @@
 """
-render_pair_totalseg_v14_cinematic_hd.py — Calibrated Anatomical Realism
+render_pair_totalseg_v15_cinematic_hd.py — Production Palette Lock
 
-v14 upgrades over v13:
-  - Temperature clustering: eliminated red-channel albedo bias
-  - Diffuse bounces = 2: internal cavities stay dark
-  - HSV saturation node (0.85→0.88) after AO: prevents meat-colored specular
-
-v14 realism calibration (based on spectral feedback):
-  - Lungs: restored warm ash-pink [0.16,0.11,0.105] — not cadaveric steel blue
-  - Kidneys: restored dark venous plum [0.06,0.025,0.03] — warmth via SSS radius, not blue pigment
-  - Atmosphere: neutralized scatter (0.72,0.75,0.82) at density=0.0015 — stops tinting transport
-  - Rim 2: demoted 125W→45W, near-white — removes sci-fi cyan edge glow
-  - Rim 1: 25W→20W, neutral tungsten
-  - Key: near-white (1.00,0.98,0.96) — surface reflection neutral, warmth purely from SSS
-  - AgX Medium Contrast (from High Contrast) — stops lacquered look
-  - Exposure = 0.0 (from -0.1)
+v15 upgrades over v14:
+  - Master palette locked: tight intentional clusters, R>G>B rule on vascular group
+  - Liver deepened to true maroon [0.10,0.02,0.015]; kidneys purple-red [0.08,0.02,0.03]
+  - Spleen magenta undertone [0.09,0.02,0.05]; lungs warmer pink [0.20,0.14,0.13]
+  - Veins de-blued to dark plum [0.05,0.02,0.08] — real veins are dark red under blue light
+  - Bone slightly warmer; gallbladder kept saturated as visual interest anchor
+  - AO: factor 0.38→0.22, distance 0.0035→0.0025 — stops crushing albedo before light
+  - HSV saturation 0.88→0.95 — perceptual richness back, palette controls identity
+  - SSS scale: x0.0025 hack → x0.001 (SSS actually contributes depth now)
+  - SSS radius tuned: liver (1.6,0.05,0.01) red bleed; kidney (1.2,0.06,0.04) purple depth
+  - Coat weights reduced: liver 0.45→0.25, most organs 0.18-0.28 (removes wet-plastic look)
+  - Key: 110W→90W; Rim2: 45W→35W, (0.95,0.95,1.0) near-neutral specular catch
 
 Run:
-    blender --background --python scripts/render_pair_totalseg_v14_cinematic_hd.py -- \\
+    blender --background --python scripts/render_pair_totalseg_v15_cinematic_hd.py -- \\
         --subject s0050 --spp 384 --size 1024 --angles 1
 """
 
@@ -48,50 +46,51 @@ def get_args():
     return ap.parse_args(argv)
 
 
-# ── Tissue definitions ────────────────────────────────────────────────────────
-# Palette rule: base_rgb = boring neutral; warmth lives in sss_radius only
+# ── Tissue definitions — production palette, R>G>B vascular rule ─────────────
 # (name, simple_hex, base_rgb, rough, ior,
 #  sss_weight, sss_scale_mm, sss_radius_rgb,
 #  coat_weight, coat_roughness, bump_type, bump_scale)
 TISSUES = [
-    # Structural neutral — near-black muddy taupe backdrop
-    ("autochthon_left",   "#4A3E3D", [0.04, 0.025, 0.02], 0.55, 1.40, 0.01, 1.0, (0.4,0.1,0.01),  0.05, 0.20, "fibrous",  0.15),
-    ("autochthon_right",  "#4A3E3D", [0.04, 0.025, 0.02], 0.55, 1.40, 0.01, 1.0, (0.4,0.1,0.01),  0.05, 0.20, "fibrous",  0.15),
-    # Lungs: muted dusty ash-pink (not blue — not cadaveric, not deoxygenated)
-    ("lung_lower_lobe_left",  "#9C8282", [0.16, 0.11, 0.105], 0.42, 1.36, 0.03, 1.2, (0.6,0.15,0.05), 0.12, 0.15, "smooth", 0.10),
-    ("lung_lower_lobe_right", "#9C8282", [0.16, 0.11, 0.105], 0.42, 1.36, 0.03, 1.2, (0.6,0.15,0.05), 0.12, 0.15, "smooth", 0.10),
-    ("lung_upper_lobe_left",  "#9C8282", [0.16, 0.11, 0.105], 0.42, 1.36, 0.03, 1.2, (0.6,0.15,0.05), 0.12, 0.15, "smooth", 0.10),
-    ("lung_upper_lobe_right", "#9C8282", [0.16, 0.11, 0.105], 0.42, 1.36, 0.03, 1.2, (0.6,0.15,0.05), 0.12, 0.15, "smooth", 0.10),
-    # Bone: dry aged ivory
-    ("vertebrae_T12", "#C2BBB0", [0.22, 0.20, 0.17], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("vertebrae_L1",  "#C2BBB0", [0.22, 0.20, 0.17], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("vertebrae_L2",  "#C2BBB0", [0.22, 0.20, 0.17], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("vertebrae_L3",  "#C2BBB0", [0.22, 0.20, 0.17], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("vertebrae_L4",  "#C2BBB0", [0.22, 0.20, 0.17], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("vertebrae_L5",  "#C2BBB0", [0.22, 0.20, 0.17], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    # Vascular warm group — SSS radius carries all warmth
-    ("heart",      "#8A2B2B", [0.15, 0.04, 0.035], 0.35, 1.40, 0.03, 1.8, (1.2,0.08,0.01),  0.25, 0.06, "lobular", 0.35),
+    # Structural neutral backdrop — muddy dark taupe
+    ("autochthon_left",   "#4A3E3D", [0.04, 0.025, 0.02], 0.55, 1.40, 0.01, 1.0, (0.4,0.10,0.01),  0.05, 0.20, "fibrous",  0.15),
+    ("autochthon_right",  "#4A3E3D", [0.04, 0.025, 0.02], 0.55, 1.40, 0.01, 1.0, (0.4,0.10,0.01),  0.05, 0.20, "fibrous",  0.15),
+    # Lungs: slightly pink-grey, not blue, not beige
+    ("lung_lower_lobe_left",  "#9C8585", [0.20, 0.14, 0.13], 0.42, 1.36, 0.03, 1.2, (0.7,0.20,0.10),  0.12, 0.15, "smooth", 0.10),
+    ("lung_lower_lobe_right", "#9C8585", [0.20, 0.14, 0.13], 0.42, 1.36, 0.03, 1.2, (0.7,0.20,0.10),  0.12, 0.15, "smooth", 0.10),
+    ("lung_upper_lobe_left",  "#9C8585", [0.20, 0.14, 0.13], 0.42, 1.36, 0.03, 1.2, (0.7,0.20,0.10),  0.12, 0.15, "smooth", 0.10),
+    ("lung_upper_lobe_right", "#9C8585", [0.20, 0.14, 0.13], 0.42, 1.36, 0.03, 1.2, (0.7,0.20,0.10),  0.12, 0.15, "smooth", 0.10),
+    # Bone: slightly warmer ivory (was too grey)
+    ("vertebrae_T12", "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
+    ("vertebrae_L1",  "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
+    ("vertebrae_L2",  "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
+    ("vertebrae_L3",  "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
+    ("vertebrae_L4",  "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
+    ("vertebrae_L5",  "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
+    # Vascular group — R>G>B rule, SSS radius drives warmth/depth
+    ("heart",      "#8A2A2A", [0.13, 0.03, 0.025], 0.35, 1.40, 0.04, 1.8, (1.4,0.08,0.02),  0.22, 0.06, "lobular", 0.35),
     ("esophagus",  "#9E6464", [0.18, 0.09, 0.08],  0.40, 1.40, 0.02, 1.5, (0.8,0.12,0.03),  0.12, 0.10, "vessel",  0.20),
-    # Core value anchor — deep mahogany-maroon, stops bleeding red reflections
-    ("liver",      "#5C2420", [0.042,0.024,0.016], 0.24, 1.38, 0.04, 1.6, (1.4,0.06,0.01),  0.45, 0.04, "lobular", 0.40),
-    # GI tract — muted clay-ochre and olive
-    ("stomach",    "#9E916B", [0.20, 0.18, 0.12],  0.34, 1.40, 0.04, 2.0, (0.9,0.20,0.04),  0.18, 0.08, "wrinkled",0.45),
-    ("gallbladder","#3A5E35", [0.02, 0.06, 0.02],  0.20, 1.40, 0.05, 1.8, (0.1,0.8,0.05),   0.35, 0.04, "lobular", 0.30),
-    ("spleen",     "#523559", [0.07, 0.03, 0.06],  0.25, 1.40, 0.04, 1.8, (0.9,0.08,0.10),  0.32, 0.04, "lobular", 0.40),
-    # Kidneys: dark blood-congested venous plum (warmth via SSS, not blue pigment)
-    ("kidney_right","#4A232E", [0.06, 0.025, 0.03], 0.24, 1.42, 0.03, 1.8, (1.0,0.08,0.05), 0.35, 0.05, "lobular", 0.45),
-    ("kidney_left", "#4A232E", [0.06, 0.025, 0.03], 0.24, 1.42, 0.03, 1.8, (1.0,0.08,0.05), 0.35, 0.05, "lobular", 0.45),
-    # Bowel group — desaturated organic clay-taupe
-    ("pancreas",   "#B09170", [0.22, 0.17, 0.12],  0.42, 1.40, 0.03, 1.5, (0.8,0.25,0.06),  0.15, 0.10, "lobular", 0.40),
-    ("duodenum",   "#A38470", [0.20, 0.15, 0.12],  0.38, 1.40, 0.02, 1.8, (0.7,0.15,0.05),  0.18, 0.08, "wrinkled",0.40),
-    ("small_bowel","#A38470", [0.20, 0.15, 0.12],  0.38, 1.40, 0.02, 1.8, (0.7,0.15,0.05),  0.18, 0.08, "wrinkled",0.40),
-    ("colon",      "#8F6E5C", [0.16, 0.11, 0.09],  0.38, 1.40, 0.02, 1.8, (0.6,0.15,0.05),  0.18, 0.08, "wrinkled",0.40),
-    ("urinary_bladder","#6E758A",[0.10,0.11,0.14], 0.32, 1.40, 0.02, 1.5, (0.2,0.15,0.6),   0.20, 0.06, "smooth",  0.20),
-    # Vessels — selective saturation tracking lines
-    ("aorta",                       "#A31414", [0.28,0.02,0.01], 0.15, 1.38, 0.04, 1.0, (1.4,0.04,0.01), 0.40, 0.03, "vessel", 0.20),
-    ("inferior_vena_cava",          "#14398A", [0.01,0.03,0.16], 0.16, 1.38, 0.04, 1.0, (0.03,0.08,1.4), 0.35, 0.03, "vessel", 0.15),
-    ("portal_vein_and_splenic_vein","#1A439E", [0.01,0.04,0.14], 0.16, 1.38, 0.04, 1.0, (0.03,0.08,1.4), 0.30, 0.03, "vessel", 0.15),
-    ("superior_vena_cava",          "#14398A", [0.01,0.03,0.16], 0.16, 1.38, 0.04, 1.0, (0.03,0.08,1.4), 0.35, 0.03, "vessel", 0.15),
+    # Core value anchor — deep maroon, red bleed via SSS
+    ("liver",      "#5C2018", [0.10, 0.02, 0.015], 0.24, 1.38, 0.05, 1.8, (1.6,0.05,0.01),  0.25, 0.04, "lobular", 0.40),
+    # GI contrast group — yellow/ochre family for color separation against reds
+    ("stomach",    "#9E916B", [0.22, 0.18, 0.12],  0.34, 1.40, 0.04, 2.0, (0.9,0.20,0.04),  0.18, 0.08, "wrinkled",0.45),
+    # Gallbladder: kept saturated — visual interest anchor
+    ("gallbladder","#3A5E35", [0.03, 0.08, 0.02],  0.20, 1.40, 0.05, 1.8, (0.1,0.80,0.05),  0.35, 0.04, "lobular", 0.30),
+    # Spleen: magenta undertone
+    ("spleen",     "#523050", [0.09, 0.02, 0.05],  0.25, 1.40, 0.04, 1.8, (1.1,0.06,0.12),  0.25, 0.04, "lobular", 0.40),
+    # Kidneys: purple-red bias, deep venous
+    ("kidney_right","#4A1E28", [0.08, 0.02, 0.03], 0.24, 1.42, 0.04, 1.8, (1.2,0.06,0.04),  0.28, 0.05, "lobular", 0.45),
+    ("kidney_left", "#4A1E28", [0.08, 0.02, 0.03], 0.24, 1.42, 0.04, 1.8, (1.2,0.06,0.04),  0.28, 0.05, "lobular", 0.45),
+    # Bowel group — ochre/clay contrast against vascular reds
+    ("pancreas",   "#B09170", [0.24, 0.19, 0.14],  0.42, 1.40, 0.03, 1.5, (0.8,0.25,0.06),  0.15, 0.10, "lobular", 0.40),
+    ("duodenum",   "#A38470", [0.21, 0.16, 0.13],  0.38, 1.40, 0.02, 1.8, (0.7,0.15,0.05),  0.18, 0.08, "wrinkled",0.40),
+    ("small_bowel","#A38470", [0.21, 0.16, 0.13],  0.38, 1.40, 0.02, 1.8, (0.7,0.15,0.05),  0.18, 0.08, "wrinkled",0.40),
+    ("colon",      "#8F6E5C", [0.18, 0.13, 0.10],  0.38, 1.40, 0.02, 1.8, (0.6,0.15,0.05),  0.18, 0.08, "wrinkled",0.40),
+    ("urinary_bladder","#6E758A",[0.10,0.11,0.14], 0.32, 1.40, 0.02, 1.5, (0.2,0.15,0.60),  0.20, 0.06, "smooth",  0.20),
+    # Vessels: dark plum (real veins = dark red under blue light, NOT bright blue)
+    ("aorta",                       "#A31414", [0.28,0.02,0.01], 0.15, 1.38, 0.04, 1.0, (1.4,0.04,0.01), 0.35, 0.03, "vessel", 0.20),
+    ("inferior_vena_cava",          "#3D2050", [0.05,0.02,0.08], 0.16, 1.38, 0.04, 1.0, (0.6,0.05,0.40), 0.30, 0.03, "vessel", 0.15),
+    ("portal_vein_and_splenic_vein","#3D2050", [0.05,0.02,0.08], 0.16, 1.38, 0.04, 1.0, (0.6,0.05,0.40), 0.28, 0.03, "vessel", 0.15),
+    ("superior_vena_cava",          "#3D2050", [0.05,0.02,0.08], 0.16, 1.38, 0.04, 1.0, (0.6,0.05,0.40), 0.30, 0.03, "vessel", 0.15),
 ]
 
 TEX_DIR = Path("data/renders/textures")
@@ -115,10 +114,10 @@ def setup_render(spp, size, device):
     scene.render.film_transparent = False
 
     scene.cycles.max_bounces             = 12
-    scene.cycles.diffuse_bounces         = 2   # forces cavity depth — don't raise
+    scene.cycles.diffuse_bounces         = 2
     scene.cycles.glossy_bounces          = 4
     scene.cycles.transmission_bounces    = 6
-    scene.cycles.volume_bounces          = 1   # minimal — atmosphere is subtle
+    scene.cycles.volume_bounces          = 1
     scene.cycles.transparent_max_bounces = 12
     scene.cycles.blur_glossy             = 0.2
 
@@ -140,7 +139,6 @@ def setup_render(spp, size, device):
     bg.inputs['Strength'].default_value = 0.01
     wt.links.new(bg.outputs['Background'], wout.inputs['Surface'])
 
-    # Neutral atmospheric depth — low density, near-gray so it doesn't tint transport
     vol = wt.nodes.new('ShaderNodeVolumeScatter')
     vol.inputs['Color'].default_value     = (0.72, 0.75, 0.82, 1)
     vol.inputs['Density'].default_value   = 0.0015
@@ -155,7 +153,7 @@ def setup_render(spp, size, device):
             scene.view_settings.look = 'AgX - Medium High Contrast'
         except Exception:
             pass
-    scene.view_settings.exposure = 0.0  # exposure via lighting, not global clamp
+    scene.view_settings.exposure = 0.0
 
     scene.unit_settings.system = 'METRIC'
 
@@ -219,19 +217,19 @@ def make_material(seg_name, base_rgb, roughness, ior,
     principled = nodes.new('ShaderNodeBsdfPrincipled')
     principled.inputs['IOR'].default_value = ior
 
-    # AO contact shadows
+    # AO contact shadows — lighter touch, doesn't crush albedo before light interaction
     ao_node = nodes.new('ShaderNodeAmbientOcclusion')
-    ao_node.inputs['Distance'].default_value = 0.0035
+    ao_node.inputs['Distance'].default_value = 0.0025
     mix_ao = nodes.new('ShaderNodeMix')
     mix_ao.data_type  = 'RGBA'
     mix_ao.blend_type = 'MULTIPLY'
-    mix_ao.inputs['Factor'].default_value = 0.38
+    mix_ao.inputs['Factor'].default_value = 0.22
     mix_ao.inputs[6].default_value = (*base_rgb, 1.0)
     links.new(ao_node.outputs['Color'], mix_ao.inputs[7])
 
-    # Mild saturation constraint — stops specular from reading as painted tissue
+    # Higher saturation — palette controls organ identity, not this node
     hsv_node = nodes.new('ShaderNodeHueSaturation')
-    hsv_node.inputs['Saturation'].default_value = 0.88
+    hsv_node.inputs['Saturation'].default_value = 0.95
     links.new(mix_ao.outputs[2], hsv_node.inputs['Color'])
     links.new(hsv_node.outputs['Color'], principled.inputs['Base Color'])
 
@@ -260,12 +258,12 @@ def make_material(seg_name, base_rgb, roughness, ior,
     links.new(noise_r.outputs['Factor'], val_map.inputs['Value'])
     links.new(val_map.outputs['Result'], principled.inputs['Roughness'])
 
-    # Random Walk SSS — warmth lives here, not in albedo
+    # Random Walk SSS — scale formula fixed so SSS actually contributes
     _hollow = ("small_bowel", "colon", "duodenum", "stomach", "esophagus")
     if sss_weight > 0 and not any(h in seg_name for h in _hollow):
         principled.subsurface_method = 'RANDOM_WALK'
         principled.inputs['Subsurface Weight'].default_value = sss_weight
-        principled.inputs['Subsurface Scale'].default_value  = sss_scale_mm / 1000.0 * 0.0025
+        principled.inputs['Subsurface Scale'].default_value  = sss_scale_mm * 0.001
         principled.inputs['Subsurface Radius'].default_value = sss_radius
 
     if coat_weight > 0:
@@ -324,11 +322,11 @@ def import_obj(obj_path):
 def setup_lights(cx, cy, cz, scene_scale):
     sc = scene_scale
 
-    # Key: near-white surgical beam — reflections neutral, warmth from SSS only
+    # Key: slightly softer surgical white (less clinical harshness)
     bpy.ops.object.light_add(type='AREA',
         location=(cx + sc*1.4, cy + sc*0.3, cz + sc*0.8))
     key = bpy.context.object
-    key.data.energy = 110
+    key.data.energy = 90
     key.data.color  = (1.00, 0.98, 0.96)
     key.data.size   = sc * 0.12
     key.data.shape  = 'SQUARE'
@@ -352,12 +350,12 @@ def setup_lights(cx, cy, cz, scene_scale):
     rim1.data.size   = sc * 0.02
     _track_to(rim1, (cx, cy, cz))
 
-    # Rim 2: clean near-white specular catch — edge separation without sci-fi glow
+    # Rim 2: near-neutral specular catch, demoted to avoid stylized reads
     bpy.ops.object.light_add(type='AREA',
         location=(cx + sc*0.4, cy - sc*1.4, cz - sc*0.2))
     rim2 = bpy.context.object
-    rim2.data.energy = 45
-    rim2.data.color  = (0.88, 0.92, 1.00)
+    rim2.data.energy = 35
+    rim2.data.color  = (0.95, 0.95, 1.00)
     rim2.data.size   = sc * 0.02
     _track_to(rim2, (cx, cy, cz))
 
@@ -479,8 +477,8 @@ def main():
         sys.exit(1)
 
     print(f"\n{'='*65}")
-    print(f"[v14-cinematic-hd]  subject={args.subject}  spp={args.spp}  size={args.size}px")
-    print(f"Realism calibration: neutral albedo, warmth via SSS, tamed atmosphere")
+    print(f"[v15-cinematic-hd]  subject={args.subject}  spp={args.spp}  size={args.size}px")
+    print(f"Production palette lock — R>G>B vascular, SSS carries warmth/depth")
     print(f"{'='*65}")
 
     import nibabel as nib
@@ -557,12 +555,12 @@ def main():
         cam_position = cam_pos_at_angle(theta)
         point_camera(cam_obj, cam_position, (cx, cy, cz))
 
-        simple_path = out_dir / f"simple_v14_{label}.png"
+        simple_path = out_dir / f"simple_v15_{label}.png"
         render_simple(objs_with_mats, cam_obj, simple_path, args.size)
         restore_gt_materials(objs_with_mats)
         print(f"  Simple → {simple_path.name}")
 
-        gt_path = out_dir / f"gt_v14_spp{args.spp}_{label}.png"
+        gt_path = out_dir / f"gt_v15_spp{args.spp}_{label}.png"
         bpy.context.scene.render.filepath = str(gt_path)
         bpy.ops.render.render(write_still=True)
         print(f"  GT     → {gt_path.name}")
@@ -583,7 +581,7 @@ def main():
         if gp.exists():
             grid[y0+label_h : y0+label_h+sz, sz+gap:sz*2+gap] = load_png_as_numpy(gp)[:sz, :sz]
 
-    grid_path = pair_out / f"{args.subject}_v14_cinematic_hd_spp{args.spp}.png"
+    grid_path = pair_out / f"{args.subject}_v15_cinematic_hd_spp{args.spp}.png"
     save_numpy_as_png(grid, grid_path)
     print(f"\nGrid → {grid_path}")
     print("Done.")
