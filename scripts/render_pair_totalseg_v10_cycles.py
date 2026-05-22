@@ -71,40 +71,46 @@ def get_args():
 
 TISSUES = [
     # (name,               hex,       base_rgb,              rough  ior   sss_w  sss_mm  sss_r               coat_w  coat_r  bump        bs    uv)
-    ("autochthon_left",   "#C05A28", [0.55,0.24,0.18],       0.38, 1.40,  0.25,  3.0,  (1.0, 0.3, 0.15),    0.2,   0.10, "fibrous",  0.35, "plane_xz"),
-    ("autochthon_right",  "#C05A28", [0.55,0.24,0.18],       0.38, 1.40,  0.25,  3.0,  (1.0, 0.3, 0.15),    0.2,   0.10, "fibrous",  0.35, "plane_xz"),
-    ("lung_lower_lobe_left",  "#88AABC",[0.78,0.75,0.74],    0.50, 1.35,  0.20,  8.0,  (1.5, 1.2, 1.0),     0.1,   0.15, "smooth",   0.20, "sphere"),
-    ("lung_lower_lobe_right", "#88AABC",[0.78,0.75,0.74],    0.50, 1.35,  0.20,  8.0,  (1.5, 1.2, 1.0),     0.1,   0.15, "smooth",   0.20, "sphere"),
-    ("lung_upper_lobe_left",  "#88AABC",[0.78,0.75,0.74],    0.50, 1.35,  0.20,  8.0,  (1.5, 1.2, 1.0),     0.1,   0.15, "smooth",   0.20, "sphere"),
-    ("lung_upper_lobe_right", "#88AABC",[0.78,0.75,0.74],    0.50, 1.35,  0.20,  8.0,  (1.5, 1.2, 1.0),     0.1,   0.15, "smooth",   0.20, "sphere"),
-    # Bone — no SSS, dry surface
-    ("vertebrae_T12",     "#EAE0CC", [0.90,0.85,0.77],       0.30, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
-    ("vertebrae_L1",      "#EAE0CC", [0.90,0.85,0.77],       0.30, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
-    ("vertebrae_L2",      "#EAE0CC", [0.90,0.85,0.77],       0.30, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
-    ("vertebrae_L3",      "#EAE0CC", [0.90,0.85,0.77],       0.30, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
-    ("vertebrae_L4",      "#EAE0CC", [0.90,0.85,0.77],       0.30, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
-    ("vertebrae_L5",      "#EAE0CC", [0.90,0.85,0.77],       0.30, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
-    # Heart
-    ("heart",             "#B03030", [0.52,0.14,0.12],       0.25, 1.40,  0.35,  4.0,  (1.2, 0.2, 0.1),     0.5,   0.06, "lobular",  0.45, "sphere"),
-    ("esophagus",         "#C87878", [0.60,0.32,0.30],       0.32, 1.40,  0.20,  3.0,  (1.0, 0.3, 0.15),    0.3,   0.08, "vessel",   0.25, "plane_xz"),
-    # Visceral organs — Glisson capsule gives strong wet coat
-    ("stomach",           "#E8C866", [0.70,0.62,0.56],       0.28, 1.40,  0.30,  4.0,  (0.9, 0.5, 0.2),     0.6,   0.05, "wrinkled", 0.60, "sphere"),
-    ("gallbladder",       "#60A840", [0.55,0.72,0.30],       0.12, 1.40,  0.25,  3.0,  (0.4, 1.0, 0.3),     0.8,   0.04, "lobular",  0.30, "sphere"),
-    ("spleen",            "#7B3A8C", [0.38,0.10,0.16],       0.18, 1.40,  0.40,  4.0,  (1.2, 0.15, 0.2),    0.7,   0.04, "lobular",  0.55, "sphere"),
-    ("kidney_right",      "#2A5EA8", [0.52,0.26,0.19],       0.20, 1.42,  0.35,  4.0,  (1.2, 0.3, 0.15),    0.6,   0.05, "lobular",  0.60, "sphere"),
-    ("kidney_left",       "#2A6EB8", [0.52,0.26,0.19],       0.20, 1.42,  0.35,  4.0,  (1.2, 0.3, 0.15),    0.6,   0.05, "lobular",  0.60, "sphere"),
-    # Liver — darkest organ, strong Glisson capsule
-    ("liver",             "#9E3028", [0.48,0.15,0.10],       0.18, 1.38,  0.40,  5.0,  (1.5, 0.2, 0.1),     0.8,   0.04, "lobular",  0.70, "sphere"),
-    ("pancreas",          "#E8B870", [0.78,0.62,0.38],       0.35, 1.40,  0.30,  4.0,  (1.0, 0.6, 0.3),     0.4,   0.06, "lobular",  0.50, "sphere"),
-    ("duodenum",          "#D4A080", [0.68,0.50,0.38],       0.35, 1.40,  0.25,  4.0,  (0.9, 0.4, 0.2),     0.4,   0.07, "wrinkled", 0.55, "plane_xy"),
-    ("small_bowel",       "#D4A080", [0.68,0.50,0.38],       0.35, 1.40,  0.25,  4.0,  (0.9, 0.4, 0.2),     0.4,   0.07, "wrinkled", 0.55, "sphere"),
-    ("colon",             "#C88060", [0.64,0.44,0.34],       0.35, 1.40,  0.25,  4.0,  (0.8, 0.35, 0.18),   0.4,   0.07, "wrinkled", 0.55, "sphere"),
-    ("urinary_bladder",   "#7888D4", [0.38,0.44,0.72],       0.25, 1.40,  0.15,  3.0,  (0.6, 0.5, 1.0),     0.6,   0.05, "smooth",   0.20, "sphere"),
-    # Vascular — very wet, strong specular, thin-wall SSS for rim glow
-    ("aorta",             "#DD1818", [0.88,0.12,0.10],       0.08, 1.38,  0.35,  2.0,  (2.0, 0.4, 0.2),     0.8,   0.03, "vessel",   0.25, "plane_xz"),
-    ("inferior_vena_cava","#1840A0", [0.12,0.28,0.72],       0.10, 1.38,  0.20,  2.0,  (0.3, 0.5, 2.0),     0.8,   0.03, "vessel",   0.20, "plane_xz"),
-    ("portal_vein_and_splenic_vein","#2050B8",[0.14,0.30,0.70],0.10,1.38, 0.20,  2.0,  (0.3, 0.5, 2.0),     0.7,   0.03, "vessel",   0.20, "plane_xy"),
-    ("superior_vena_cava","#1840A0", [0.12,0.28,0.72],       0.10, 1.38,  0.20,  2.0,  (0.3, 0.5, 2.0),     0.8,   0.03, "vessel",   0.20, "plane_xz"),
+    # Muscles: dark, opaque — heavy background element, not competing with organs
+    ("autochthon_left",   "#C05A28", [0.12,0.04,0.03],       0.35, 1.40,  0.15,  1.5,  (1.0, 0.1, 0.02),    0.15,  0.10, "fibrous",  0.25, "plane_xz"),
+    ("autochthon_right",  "#C05A28", [0.12,0.04,0.03],       0.35, 1.40,  0.15,  1.5,  (1.0, 0.1, 0.02),    0.15,  0.10, "fibrous",  0.25, "plane_xz"),
+    # Lungs: dark blood-perfused tissue, tight SSS to prevent paper-lantern glow
+    ("lung_lower_lobe_left",  "#88AABC",[0.16,0.08,0.09],    0.40, 1.35,  0.25,  2.0,  (1.2, 0.2, 0.05),    0.15,  0.15, "smooth",   0.15, "sphere"),
+    ("lung_lower_lobe_right", "#88AABC",[0.16,0.08,0.09],    0.40, 1.35,  0.25,  2.0,  (1.2, 0.2, 0.05),    0.15,  0.15, "smooth",   0.15, "sphere"),
+    ("lung_upper_lobe_left",  "#88AABC",[0.16,0.08,0.09],    0.40, 1.35,  0.25,  2.0,  (1.2, 0.2, 0.05),    0.15,  0.15, "smooth",   0.15, "sphere"),
+    ("lung_upper_lobe_right", "#88AABC",[0.16,0.08,0.09],    0.40, 1.35,  0.25,  2.0,  (1.2, 0.2, 0.05),    0.15,  0.15, "smooth",   0.15, "sphere"),
+    # Bone: dry, matte, dark ivory — structural shadow element
+    ("vertebrae_T12",     "#EAE0CC", [0.25,0.22,0.18],       0.65, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
+    ("vertebrae_L1",      "#EAE0CC", [0.25,0.22,0.18],       0.65, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
+    ("vertebrae_L2",      "#EAE0CC", [0.25,0.22,0.18],       0.65, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
+    ("vertebrae_L3",      "#EAE0CC", [0.25,0.22,0.18],       0.65, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
+    ("vertebrae_L4",      "#EAE0CC", [0.25,0.22,0.18],       0.65, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
+    ("vertebrae_L5",      "#EAE0CC", [0.25,0.22,0.18],       0.65, 1.55,  0.0,   0.0,  (1.0, 0.8, 0.6),     0.0,   0.30, "none",     0.0,  "none"),
+    # Heart: rich muscular crimson
+    ("heart",             "#B03030", [0.28,0.06,0.05],       0.28, 1.40,  0.30,  3.0,  (1.2, 0.15, 0.05),   0.25,  0.06, "lobular",  0.45, "sphere"),
+    ("esophagus",         "#C87878", [0.35,0.15,0.14],       0.35, 1.40,  0.20,  2.0,  (1.0, 0.2, 0.08),    0.15,  0.08, "vessel",   0.25, "plane_xz"),
+    # Liver: very deep maroon/brown — blood-filled filter organ, focal point of scene
+    ("liver",             "#9E3028", [0.18,0.04,0.03],       0.22, 1.38,  0.35,  2.0,  (1.5, 0.1, 0.02),    0.40,  0.04, "lobular",  0.50, "sphere"),
+    # Stomach: olive/ochre to contrast against red liver
+    ("stomach",           "#E8C866", [0.38,0.32,0.22],       0.30, 1.40,  0.25,  2.5,  (1.0, 0.4, 0.1),     0.30,  0.05, "wrinkled", 0.50, "sphere"),
+    # Gallbladder: dark forest green
+    ("gallbladder",       "#60A840", [0.08,0.18,0.05],       0.15, 1.40,  0.30,  2.0,  (0.2, 1.0, 0.2),     0.35,  0.04, "lobular",  0.30, "sphere"),
+    # Spleen: deep purplish-red
+    ("spleen",            "#7B3A8C", [0.18,0.03,0.08],       0.20, 1.40,  0.35,  2.5,  (1.2, 0.1, 0.15),    0.35,  0.04, "lobular",  0.45, "sphere"),
+    # Kidneys: dark purplish-brown
+    ("kidney_right",      "#2A5EA8", [0.15,0.06,0.10],       0.22, 1.42,  0.30,  2.5,  (1.2, 0.2, 0.1),     0.30,  0.05, "lobular",  0.50, "sphere"),
+    ("kidney_left",       "#2A6EB8", [0.15,0.06,0.10],       0.22, 1.42,  0.30,  2.5,  (1.2, 0.2, 0.1),     0.30,  0.05, "lobular",  0.50, "sphere"),
+    # Bowel: tan/ochre tones to pop against deep maroon liver
+    ("pancreas",          "#E8B870", [0.42,0.30,0.16],       0.38, 1.40,  0.25,  2.0,  (1.0, 0.5, 0.2),     0.20,  0.06, "lobular",  0.45, "sphere"),
+    ("duodenum",          "#D4A080", [0.38,0.24,0.16],       0.35, 1.40,  0.20,  2.5,  (0.9, 0.3, 0.1),     0.25,  0.07, "wrinkled", 0.45, "plane_xy"),
+    ("small_bowel",       "#D4A080", [0.38,0.24,0.16],       0.35, 1.40,  0.20,  2.5,  (0.9, 0.3, 0.1),     0.25,  0.07, "wrinkled", 0.45, "sphere"),
+    ("colon",             "#C88060", [0.34,0.20,0.14],       0.35, 1.40,  0.20,  2.5,  (0.8, 0.3, 0.1),     0.25,  0.07, "wrinkled", 0.45, "sphere"),
+    ("urinary_bladder",   "#7888D4", [0.16,0.18,0.35],       0.25, 1.40,  0.20,  2.0,  (0.4, 0.4, 1.0),     0.25,  0.05, "smooth",   0.20, "sphere"),
+    # Vessels: high-contrast saturated SSS — pure red/blue under backlight
+    ("aorta",             "#DD1818", [0.45,0.03,0.02],       0.10, 1.38,  0.40,  1.5,  (2.0, 0.1, 0.02),    0.40,  0.03, "vessel",   0.20, "plane_xz"),
+    ("inferior_vena_cava","#1840A0", [0.02,0.06,0.30],       0.12, 1.38,  0.30,  1.5,  (0.1, 0.2, 2.0),     0.35,  0.03, "vessel",   0.15, "plane_xz"),
+    ("portal_vein_and_splenic_vein","#2050B8",[0.03,0.08,0.28],0.12,1.38, 0.30,  1.5,  (0.1, 0.2, 2.0),     0.30,  0.03, "vessel",   0.15, "plane_xy"),
+    ("superior_vena_cava","#1840A0", [0.02,0.06,0.30],       0.12, 1.38,  0.30,  1.5,  (0.1, 0.2, 2.0),     0.35,  0.03, "vessel",   0.15, "plane_xz"),
 ]
 
 TEX_DIR = Path("data/renders/textures")
@@ -133,17 +139,17 @@ def setup_render(spp, size, device):
     scene.world = bpy.data.worlds.new("World")
     scene.world.use_nodes = True
     bg = scene.world.node_tree.nodes['Background']
-    bg.inputs['Color'].default_value = (0, 0, 0, 1)
-    bg.inputs['Strength'].default_value = 0.0
+    bg.inputs['Color'].default_value = (0.015, 0.015, 0.018, 1)  # very subtle cool ambient lift
+    bg.inputs['Strength'].default_value = 0.08
     # AgX color management
     scene.view_settings.view_transform = 'AgX'
     try:
         scene.view_settings.look = 'AgX - Medium High Contrast'
     except Exception:
         pass  # older Blender — AgX look names may differ
-    # Scene units: 1 Blender unit = 1 mm
+    scene.view_settings.exposure = -0.8  # pull down to protect deep organ colors
+    # Scene units: native meters (1 Blender unit = 1 m)
     scene.unit_settings.system = 'METRIC'
-    scene.unit_settings.scale_length = 0.001
 
 
 # ── Material creation ─────────────────────────────────────────────────────────
@@ -170,7 +176,7 @@ def make_material(seg_name, base_rgb, roughness, ior,
     if sss_weight > 0:
         principled.subsurface_method = 'RANDOM_WALK'
         principled.inputs['Subsurface Weight'].default_value = sss_weight
-        principled.inputs['Subsurface Scale'].default_value  = sss_scale_mm
+        principled.inputs['Subsurface Scale'].default_value  = sss_scale_mm / 1000.0 * 0.7
         principled.inputs['Subsurface Radius'].default_value = sss_radius
 
     # Coat (Glisson capsule / peritoneal fluid)
@@ -188,7 +194,7 @@ def make_material(seg_name, base_rgb, roughness, ior,
         if bump_path.exists():
             uv_node  = nodes.new('ShaderNodeTexCoord')
             map_node = nodes.new('ShaderNodeMapping')
-            map_node.inputs['Scale'].default_value = (4.0, 4.0, 4.0)  # tile 4x
+            map_node.inputs['Scale'].default_value = (1.5, 1.5, 1.5)  # tile 1.5x — avoid "clay" over-tiling
 
             tex_node = nodes.new('ShaderNodeTexImage')
             tex_node.image = bpy.data.images.load(str(bump_path))
@@ -197,7 +203,7 @@ def make_material(seg_name, base_rgb, roughness, ior,
 
             bump_node = nodes.new('ShaderNodeBump')
             bump_node.inputs['Strength'].default_value = bump_scale
-            bump_node.inputs['Distance'].default_value = 1.0
+            bump_node.inputs['Distance'].default_value = 0.0005  # 0.5mm in meters
 
             links.new(uv_node.outputs['UV'],          map_node.inputs['Vector'])
             links.new(map_node.outputs['Vector'],      tex_node.inputs['Vector'])
@@ -216,6 +222,7 @@ def import_obj(obj_path):
         filepath=str(obj_path),
         forward_axis='Y',
         up_axis='Z',
+        global_scale=0.001,   # OBJs are in mm; convert to meters
     )
     new_objs = [o for o in bpy.data.objects if o.name not in before]
     return new_objs[0] if new_objs else None
@@ -226,35 +233,33 @@ def import_obj(obj_path):
 def setup_lights(cx, cy, cz, scene_scale):
     sc = scene_scale
 
-    # Key: large warm area light, upper-left front
+    # Key: large warm area light, upper-left — on same side as camera (posterior), lights anterior surface
     bpy.ops.object.light_add(type='AREA',
-        location=(cx + sc*0.73, cy - sc*0.54, cz + sc*1.28))
+        location=(cx + sc*0.73, cy + sc*0.54, cz + sc*1.28))
     key = bpy.context.object
-    key.data.energy = 40000
-    key.data.color  = (1.00, 0.92, 0.82)  # warm white
-    key.data.size   = sc * 0.30
-    key.data.shape  = 'RECTANGLE'
-    key.data.size_y = sc * 0.30
+    key.data.energy = 280     # W — smaller tighter key = better depth cues
+    key.data.color  = (1.00, 0.90, 0.78)  # warm white
+    key.data.size   = sc * 0.22
+    key.data.shape  = 'SQUARE'
     # Point toward scene center
     _track_to(key, (cx, cy, cz))
 
-    # Fill: large cool area light, opposite side
+    # Fill: soft cool fill — anterior side, lifts shadow detail
     bpy.ops.object.light_add(type='AREA',
-        location=(cx - sc*0.59, cy + sc*1.52, cz + sc*1.48))
+        location=(cx - sc*0.59, cy - sc*1.52, cz + sc*1.48))
     fill = bpy.context.object
-    fill.data.energy = 4000
-    fill.data.color  = (0.55, 0.68, 1.00)  # cool blue
-    fill.data.size   = sc * 0.38
+    fill.data.energy = 35
+    fill.data.color  = (0.60, 0.75, 1.00)  # cool blue
+    fill.data.size   = sc * 0.80
     _track_to(fill, (cx, cy, cz))
 
-    # Rim: warm-orange from behind/below — activates SSS glow in thin tissue
-    # Placed opposite to camera so light passes THROUGH thin organs
+    # Rim: anterior-low — SSS glow through thin walls (neutral warm, tissue colors the scatter)
     bpy.ops.object.light_add(type='AREA',
-        location=(cx - sc*0.40, cy + sc*0.60, cz - sc*0.50))
+        location=(cx - sc*0.40, cy - sc*0.60, cz - sc*0.50))
     rim = bpy.context.object
-    rim.data.energy = 8000
-    rim.data.color  = (1.00, 0.45, 0.18)  # warm orange-red
-    rim.data.size   = sc * 0.22
+    rim.data.energy = 110     # controlled — tissue SSS does the coloring, not the light
+    rim.data.color  = (1.00, 0.72, 0.62)  # neutral warm, not saturated orange
+    rim.data.size   = sc * 0.40
     _track_to(rim, (cx, cy, cz))
 
 
@@ -275,8 +280,8 @@ def setup_camera(size, fov_deg=30):
     cam_obj.data.type = 'PERSP'
     cam_obj.data.lens_unit = 'FOV'
     cam_obj.data.angle = math.radians(fov_deg)
-    cam_obj.data.clip_start  = 1.0
-    cam_obj.data.clip_end    = 10000.0
+    cam_obj.data.clip_start  = 0.001
+    cam_obj.data.clip_end    = 100.0
     # No DoF for now (adds noise, need high SPP)
     cam_obj.data.dof.use_dof = False
     return cam_obj
@@ -380,10 +385,6 @@ def main():
     print(f"Blender Cycles + Random Walk SSS + Coat + Rim light + AgX")
     print(f"{'='*60}")
 
-    # Scene units
-    bpy.context.scene.unit_settings.system = 'METRIC'
-    bpy.context.scene.unit_settings.scale_length = 0.001  # 1 unit = 1mm
-
     # Load CT metadata to get scene bounds (same camera formula as v1-v7)
     import nibabel as nib
     dataset_dir = Path(args.dataset)
@@ -393,9 +394,10 @@ def main():
     zooms   = ct_img.header.get_zooms()[:3]
     nx,ny,nz = shape
     sx,sy,sz = zooms
-    cx,cy,cz = nx*sx/2, ny*sy/2, nz*sz/2
-    radius   = max(nx*sx, ny*sy, nz*sz) * 0.9
-    scene_scale = max(nx*sx, ny*sy, nz*sz)
+    # Convert mm → meters so positions match OBJs imported with global_scale=0.001
+    cx,cy,cz    = nx*sx/2/1000, ny*sy/2/1000, nz*sz/2/1000
+    radius      = max(nx*sx, ny*sy, nz*sz) * 0.9 / 1000
+    scene_scale = max(nx*sx, ny*sy, nz*sz) / 1000
 
     # Camera angles
     if args.angles == 1:
@@ -410,7 +412,7 @@ def main():
     def cam_pos_at_angle(theta_deg):
         t      = math.radians(theta_deg)
         dx_rel = radius * 0.6    # offset from scene centre in X
-        dy_rel = -radius * 1.1   # offset from scene centre in Y
+        dy_rel = radius * 1.1    # +Y = posterior side → camera looks anteriorly (sees organs)
         return [cx + dx_rel*math.cos(t) - dy_rel*math.sin(t),
                 cy + dx_rel*math.sin(t) + dy_rel*math.cos(t),
                 cz + radius*0.5]
