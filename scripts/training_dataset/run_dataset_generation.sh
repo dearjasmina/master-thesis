@@ -20,12 +20,12 @@ set -euo pipefail
 
 # ── Configuration — edit these if needed ──────────────────────────────────────
 BLENDER_PATH="${BLENDER_PATH:-blender}"
-SCRIPT="scripts/generate_training_dataset.py"
+SCRIPT="scripts/training_dataset/generate_training_dataset.py"
 DATASET="/Users/jasminavulovic/Documents/Masters/TEZAAA/Totalsegmentator_dataset_v201"
-MESH_BASE="data/renders/totalseg"
+MESH_BASE="data/meshes"
 OUTPUT_DIR="data/training_dataset"
-SPP=256
-SIZE=512
+SPP=384
+SIZE=1024
 DEVICE="CPU"
 SUBJECTS=""
 START=0
@@ -48,11 +48,14 @@ done
 if [[ -n "$SUBJECTS" ]]; then
     subject_list=($SUBJECTS)
 else
-    # Auto-discover: subjects that have meshes extracted
+    # Auto-discover: subjects that have meshes extracted under data/meshes/{subject}/
     subject_list=()
-    for mesh_dir in "$MESH_BASE"/*/meshes; do
-        subj=$(basename "$(dirname "$mesh_dir")")
-        subject_list+=("$subj")
+    for mesh_dir in "$MESH_BASE"/*/; do
+        subj=$(basename "$mesh_dir")
+        # Only include if at least one OBJ exists
+        if compgen -G "$mesh_dir/*.obj" > /dev/null 2>&1; then
+            subject_list+=("$subj")
+        fi
     done
     # Sort for deterministic ordering
     IFS=$'\n' subject_list=($(sort <<<"${subject_list[*]}")); unset IFS
@@ -84,8 +87,8 @@ for subject in "${subject_list[@]}"; do
 
     # Check if already complete (all 15 sample dirs present)
     existing=$(find "$OUTPUT_DIR" -maxdepth 1 -type d -name "${subject}_v*" 2>/dev/null | wc -l | tr -d ' ')
-    if (( existing >= 15 )); then
-        echo "[$idx/$total] $subject — already complete ($existing/15 views), skipping"
+    if (( existing >= 20 )); then
+        echo "[$idx/$total] $subject — already complete ($existing/20 views), skipping"
         (( skipped++ )) || true
         continue
     fi

@@ -613,7 +613,7 @@ def restore_gt_materials(objs_with_mats):
 def main():
     args = get_args()
 
-    mesh_dir   = Path("data/renders/totalseg") / args.subject / "meshes"
+    mesh_dir   = Path("data/meshes") / args.subject
     out_root   = Path(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
 
