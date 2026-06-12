@@ -87,7 +87,7 @@ for subject in "${subject_list[@]}"; do
     (( idx++ )) || true
 
     # Check if already complete (all 15 sample dirs present)
-    existing=$(find "$OUTPUT_DIR/$subject" -maxdepth 1 -type d -name "v*" 2>/dev/null | wc -l | tr -d ' ')
+    existing=$(find "$OUTPUT_DIR/$subject" -maxdepth 1 -type d -name "v*" 2>/dev/null | wc -l | tr -d ' ') || existing=0
     if (( existing >= 20 )); then
         echo "[$idx/$total] $subject — already complete ($existing/20 views), skipping"
         (( skipped++ )) || true
