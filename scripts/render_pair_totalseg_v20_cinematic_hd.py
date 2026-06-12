@@ -71,7 +71,8 @@ def get_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--subject",  default="s0050")
     ap.add_argument("--dataset",
-        default="/Users/jasminavulovic/Documents/Masters/TEZAAA/Totalsegmentator_dataset_v201")
+        default="/home/vulovic/jasmina/dataset")
+    ap.add_argument("--mesh_dir", default="data/meshes")
     ap.add_argument("--spp",    type=int, default=384)
     ap.add_argument("--size",   type=int, default=1024)
     ap.add_argument("--angles", type=int, default=3)
@@ -546,8 +547,8 @@ def save_numpy_as_png(arr, path):
 def main():
     args = get_args()
 
-    mesh_dir = Path("data/renders/totalseg") / args.subject / "meshes"
-    out_dir  = Path("data/renders/totalseg") / args.subject
+    mesh_dir = Path(args.mesh_dir) / args.subject
+    out_dir  = Path("data/renders") / args.subject
     pair_out = Path("results/totalseg_pairs")
     pair_out.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
