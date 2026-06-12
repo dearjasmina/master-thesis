@@ -616,6 +616,8 @@ def main():
     mesh_dir   = Path("data/meshes") / args.subject
     out_root   = Path(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
+    subj_dir   = out_root / args.subject
+    subj_dir.mkdir(parents=True, exist_ok=True)
 
     if not mesh_dir.exists():
         print(f"ERROR: mesh_dir not found: {mesh_dir}")
@@ -705,7 +707,7 @@ def main():
 
     # Write the tissue→ID mapping once per subject (training code uses this to
     # convert segid.exr float values to semantic class labels).
-    tissue_ids_path = out_root / "tissue_ids.json"
+    tissue_ids_path = subj_dir / "tissue_ids.json"
     with open(tissue_ids_path, "w") as f:
         json.dump({"background_id": 0, "tissues": tissue_id_map}, f, indent=2)
 
@@ -765,9 +767,8 @@ def main():
                 cz + rng.uniform(-scene_scale * 0.02, scene_scale * 0.02),
             ]
 
-            label     = f"v{view_id:02d}_az{az_nom:+.0f}_el{el_nom:+.0f}"
-            view_name = f"{args.subject}_{label}"
-            view_dir  = out_root / view_name
+            label    = f"v{view_id:02d}_az{az_nom:+.0f}_el{el_nom:+.0f}"
+            view_dir = subj_dir / label
             view_dir.mkdir(parents=True, exist_ok=True)
 
             print(f"\n--- View [{view_id:02d}/{n_views}] {label} "
@@ -915,7 +916,7 @@ def main():
                 json.dump(meta, f, indent=2)
 
             generated_samples.append({
-                "sample_dir": view_name,
+                "sample_dir": label,
                 "view_id":    view_id,
                 "azimuth_nominal":   az_nom,
                 "elevation_nominal": el_nom,
@@ -935,7 +936,7 @@ def main():
         },
         "samples": generated_samples,
     }
-    summary_path = out_root / f"{args.subject}_summary.json"
+    summary_path = subj_dir / "summary.json"
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
 

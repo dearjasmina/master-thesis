@@ -86,7 +86,7 @@ for subject in "${subject_list[@]}"; do
     (( idx++ )) || true
 
     # Check if already complete (all 15 sample dirs present)
-    existing=$(find "$OUTPUT_DIR" -maxdepth 1 -type d -name "${subject}_v*" 2>/dev/null | wc -l | tr -d ' ')
+    existing=$(find "$OUTPUT_DIR/$subject" -maxdepth 1 -type d -name "v*" 2>/dev/null | wc -l | tr -d ' ')
     if (( existing >= 20 )); then
         echo "[$idx/$total] $subject — already complete ($existing/20 views), skipping"
         (( skipped++ )) || true
@@ -94,7 +94,7 @@ for subject in "${subject_list[@]}"; do
     fi
 
     echo ""
-    echo "[$idx/$total] Processing $subject (${existing}/15 views done)..."
+    echo "[$idx/$total] Processing $subject (${existing}/20 views done)..."
     echo "  Started: $(date '+%H:%M:%S')"
 
     if "$BLENDER_PATH" --background --python "$SCRIPT" -- \
