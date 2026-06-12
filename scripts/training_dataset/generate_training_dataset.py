@@ -114,7 +114,17 @@ def setup_render(spp, size, device):
     scene.render.engine = 'CYCLES'
     scene.cycles.samples = spp
     scene.cycles.use_denoising = False
-    scene.cycles.device = device
+
+    if device == 'GPU':
+        prefs = bpy.context.preferences.addons['cycles'].preferences
+        prefs.compute_device_type = 'CUDA'
+        prefs.get_devices()
+        for d in prefs.devices:
+            d.use = True
+        scene.cycles.device = 'GPU'
+        print(f"[GPU] CUDA devices: {[d.name for d in prefs.devices if d.use]}")
+    else:
+        scene.cycles.device = 'CPU'
     scene.render.film_transparent = False
 
     scene.cycles.max_bounces             = 12
