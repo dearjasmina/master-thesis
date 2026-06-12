@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-DATASET="${DATASET:-/home/vulovic/jasmina/Totalsegmentator_dataset_v201}"
+DATASET="${DATASET:-/home/vulovic/jasmina/dataset}"
 SPP=384
 SIZE=1024
 DEVICE="GPU"
