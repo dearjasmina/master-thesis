@@ -1,0 +1,6 @@
+# Packages needed for mesh extraction + dataset generation on the cluster.
+# Install with: pip3 install --user -r requirements-rendering.txt
+
+nibabel>=5.2
+pyvista>=0.47
+numpy>=1.26
