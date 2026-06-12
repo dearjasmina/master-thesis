@@ -21,7 +21,7 @@ set -euo pipefail
 # ── Configuration — edit these if needed ──────────────────────────────────────
 BLENDER_PATH="${BLENDER_PATH:-blender}"
 SCRIPT="scripts/training_dataset/generate_training_dataset.py"
-DATASET="/Users/jasminavulovic/Documents/Masters/TEZAAA/Totalsegmentator_dataset_v201"
+DATASET="${DATASET:-/Users/jasminavulovic/Documents/Masters/TEZAAA/Totalsegmentator_dataset_v201}"
 MESH_BASE="data/meshes"
 OUTPUT_DIR="data/training_dataset"
 SPP=384
@@ -35,6 +35,7 @@ COUNT=9999  # process up to this many subjects
 while [[ $# -gt 0 ]]; do
     case $1 in
         --subjects) SUBJECTS="$2"; shift 2 ;;
+        --dataset)  DATASET="$2";  shift 2 ;;
         --spp)      SPP="$2";      shift 2 ;;
         --size)     SIZE="$2";     shift 2 ;;
         --device)   DEVICE="$2";   shift 2 ;;
