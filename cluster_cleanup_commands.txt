@@ -1,0 +1,2 @@
+# Delete raw dataset folders for completed subjects (20 views) — no disk writes needed
+for d in ~/jasmina/master-thesis/data/training_dataset/*/; do subject=$(basename "$d"); count=$(find "$d" -maxdepth 1 -type d -name "v*" 2>/dev/null | wc -l); if [ "$count" -ge 20 ] && [ -d ~/jasmina/dataset/$subject ]; then rm -rf ~/jasmina/dataset/$subject && echo "deleted $subject"; fi; done
