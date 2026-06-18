@@ -67,7 +67,8 @@ def log(rank, msg):
 # ── CLI ───────────────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--preset", default="full1024", choices=["proto512", "full1024", "rgb_only"])
+    p.add_argument("--preset", default="full1024",
+                   choices=["proto512", "full1024", "rgb_only", "overfit"])
     p.add_argument("--data-root", default=None)
     p.add_argument("--output-dir", default=None)
     p.add_argument("--epochs", type=int, default=None)
@@ -81,6 +82,10 @@ def parse_args():
     p.add_argument("--input-buffers", default=None,
                    help="comma list from: " + ",".join(ALL_INPUT_BUFFERS))
     p.add_argument("--num-workers", type=int, default=None)
+    p.add_argument("--subjects", default=None,
+                   help="comma list of subject ids to train on, ignoring the split (overfit test)")
+    p.add_argument("--max-subjects", type=int, default=None,
+                   help="cap the (post-split) subject list to the first N (0 = all)")
     p.add_argument("--resume", default=None)
     return p.parse_args()
 
@@ -99,6 +104,8 @@ def build_config(args):
     if args.normals_space: c.data.normals_space = args.normals_space
     if args.input_buffers: c.data.input_buffers = [b.strip() for b in args.input_buffers.split(",") if b.strip()]
     if args.num_workers is not None: c.data.num_workers = args.num_workers
+    if args.subjects:      c.data.subjects = [s.strip() for s in args.subjects.split(",") if s.strip()]
+    if args.max_subjects is not None: c.data.max_subjects = args.max_subjects
     if args.resume:        c.train.resume = args.resume
     return c
 
@@ -221,6 +228,14 @@ def main():
                                if lpips_net is not None else torch.zeros((), device=device))
                     loss_G = l_gan + l_fm + l_l1 + l_vgg + l_lpips
                 (loss_G / accum).backward()
+
+            if not (torch.isfinite(loss_G) and torch.isfinite(loss_D)):
+                log(rank, f"[FATAL] non-finite loss at e{epoch} step {step} "
+                          f"(G={float(loss_G)}, D={float(loss_D)}) — aborting. "
+                          f"Check LR / inputs / target range.")
+                if distributed:
+                    dist.destroy_process_group()
+                sys.exit(1)
 
             if is_boundary:
                 opt_D.step(); opt_G.step()

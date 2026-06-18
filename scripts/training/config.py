@@ -76,6 +76,13 @@ class DataConfig:
     # extractions — so we keep them. Raise only to exclude truly-degenerate cases.
     min_tissues: int = 0
 
+    # Debug/overfit knobs (do not use for real runs):
+    #   subjects     — train on EXACTLY these subject ids, ignoring the split
+    #                  (for the overfit sanity test, e.g. ["s0000", "s0001"]).
+    #   max_subjects — cap the (post-split) subject list to the first N (0 = all).
+    subjects: Optional[List[str]] = None
+    max_subjects: int = 0
+
 
 @dataclass
 class ModelConfig:
@@ -188,4 +195,19 @@ def preset(name: str) -> Config:
         c.data.input_buffers = ["seg_rgb"]
         c.train.output_dir = "results/training_runs/rgb_only"
         return c
-    raise ValueError(f"unknown preset '{name}' (choose: proto512, full1024, rgb_only)")
+    if name == "overfit":
+        # Step-1 sanity: memorise a handful of subjects (pass --subjects / --max-subjects).
+        # Small + fast + frequent samples; if this won't drive L1→~0 and fake→GT,
+        # there is a data/loss/normalisation bug — fix before scaling up.
+        c = preset("rgb_only")
+        c.data.size = 256
+        c.data.load_size = 256
+        c.train.epochs = 400
+        c.train.batch_size = 2
+        c.train.grad_accum = 1
+        c.train.log_every = 5
+        c.train.sample_every = 5
+        c.train.save_every = 100
+        c.train.output_dir = "results/training_runs/overfit"
+        return c
+    raise ValueError(f"unknown preset '{name}' (choose: proto512, full1024, rgb_only, overfit)")
