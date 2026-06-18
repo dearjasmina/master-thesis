@@ -43,7 +43,13 @@ except Exception:
 
 def tissue_map(subj_dir: Path):
     p = subj_dir / "tissue_ids.json"
-    return json.load(open(p)).get("tissues", {}) if p.exists() else {}
+    if not p.exists():
+        return {}
+    try:
+        return json.load(open(p)).get("tissues", {})
+    except Exception:
+        print(f"[warn] {p}: empty or invalid JSON — skipped")
+        return {}
 
 
 def fg_fraction(view_dir: Path) -> float:
