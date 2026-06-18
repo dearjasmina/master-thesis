@@ -1,0 +1,38 @@
+DATASET: 754 subjects | 29 tissues | 15035 views
+tissues/subject: min=1 max=29 mean=20.84
+
+TISSUE PRESENCE (sorted, rarest first):
+  urinary_bladder                      350 subj ( 46.4%)
+  vertebrae_L5                         376 subj ( 49.9%)
+  vertebrae_L4                         389 subj ( 51.6%)
+  vertebrae_L3                         391 subj ( 51.9%)
+  gallbladder                          396 subj ( 52.5%)
+  vertebrae_L2                         440 subj ( 58.4%)
+  duodenum                             476 subj ( 63.1%)
+  kidney_right                         486 subj ( 64.5%)
+  vertebrae_L1                         499 subj ( 66.2%)
+  kidney_left                          501 subj ( 66.4%)
+  pancreas                             503 subj ( 66.7%)
+  small_bowel                          505 subj ( 67.0%)
+  superior_vena_cava                   507 subj ( 67.2%)
+  portal_vein_and_splenic_vein         519 subj ( 68.8%)
+  vertebrae_T12                        549 subj ( 72.8%)
+  spleen                               563 subj ( 74.7%)
+  colon                                567 subj ( 75.2%)
+  lung_upper_lobe_right                568 subj ( 75.3%)
+  stomach                              572 subj ( 75.9%)
+  heart                                588 subj ( 78.0%)
+  liver                                595 subj ( 78.9%)
+  inferior_vena_cava                   619 subj ( 82.1%)
+  lung_lower_lobe_right                628 subj ( 83.3%)
+  lung_lower_lobe_left                 639 subj ( 84.7%)
+  lung_upper_lobe_left                 660 subj ( 87.5%)
+  esophagus                            669 subj ( 88.7%)
+  aorta                                707 subj ( 93.8%)
+  autochthon_left                      726 subj ( 96.3%)
+  autochthon_right                     726 subj ( 96.3%)
+
+SPLIT CANDIDATE COMPARISON (lower missing / deviation = better):
+  candidate     train   val  test  miss_val  miss_test  mean_dev  max_dev
+  random          638    60    56         0          0   0.00573  0.01671
+  stratified      641    55    58         0          0   0.00151  0.00784
