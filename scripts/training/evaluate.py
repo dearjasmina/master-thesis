@@ -8,8 +8,8 @@ Reports per-image PSNR / SSIM / LPIPS vs GT (primary ranking metric), writes a C
 and sample grids. The cross-view reprojection consistency gate is stubbed below
 (Stage-2 placeholder) since it needs known-pose paired-view batching.
 
-NOTE: with the current placeholder split (splits.py puts everything in "train"),
-use --split train until the volume-level split is implemented.
+The volume-level split is implemented in splits.py, so --split test / val evaluate
+genuinely held-out subjects.
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def main():
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--preset", default="full1024", choices=["proto512", "full1024", "rgb_only"])
     ap.add_argument("--data-root", default=None)
-    ap.add_argument("--split", default="train")
+    ap.add_argument("--split", default="test")
     ap.add_argument("--target", default=None, choices=["preview_png", "exr_agx", "exr_linear"])
     ap.add_argument("--input-buffers", default=None)
     ap.add_argument("--max-samples", type=int, default=0, help="0 = all")

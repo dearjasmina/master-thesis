@@ -76,12 +76,21 @@ bash scripts/training/run_train_4gpu.sh full1024
 venv/bin/python scripts/training/train.py --preset proto512 --epochs 1 --num-workers 0
 ```
 
-Evaluate (use `--split train` until the split is implemented — see below):
+Evaluate on held-out subjects:
 
 ```bash
 venv/bin/python scripts/training/evaluate.py \
   --checkpoint results/training_runs/full1024/checkpoints/latest.pt \
-  --preset full1024 --split train
+  --preset full1024 --split test
+```
+
+Inspect the data split / data quality first:
+
+```bash
+# tissue coverage + candidate-split comparison
+venv/bin/python scripts/training/analyze_dataset_split.py --data-root data/training_dataset --out results/split_analysis
+# contact sheet of low-tissue subjects (confirm limited-FOV vs broken)
+venv/bin/python scripts/training/inspect_suspects.py --data-root data/training_dataset --out results/suspects --max-tissues 5
 ```
 
 ## Files
@@ -96,15 +105,22 @@ venv/bin/python scripts/training/evaluate.py \
 | `train.py`    | DDP training loop (bf16, grad-accum, checkpoint/resume, sample dumps) |
 | `evaluate.py` | PSNR/SSIM/LPIPS + cross-view reprojection gate (placeholder) |
 
+## Split (implemented)
+
+`splits.py` does a deterministic, **volume-level**, hash-based 85/7.5/7.5 split: each
+subject's bucket is a pure function of its id, so it is **stable as you keep generating**
+(new subjects never reshuffle existing train/val/test). Tissue coverage analysis showed the
+rarest organ is in ~46% of subjects, so this plain hash split already lands **0 tissues
+missing from val/test** — no stratification needed. Low-tissue subjects are **kept**
+(`min_tissues=0`); they were confirmed to be legitimate limited-FOV scans, not broken
+extractions. Tune via `cfg.data.{val_frac,test_frac,split_seed,min_tissues}`.
+
 ## Placeholders (intentionally not done yet)
 
-1. **Train/val/test split** — `splits.py` puts **every subject in `train`**. Implement a
-   deterministic **volume-level** 85/7.5/7.5 split later (never split by view). A reference
-   exists in `scripts/training_dataset/split_training_dataset.py` / `data/splits.json`.
-2. **Reprojection consistency loss** (`losses.ReprojectionConsistencyLoss`, `w_reproj`) —
+1. **Reprojection consistency loss** (`losses.ReprojectionConsistencyLoss`, `w_reproj`) —
    Stage-2 only, needs paired-view batching. Add **only if** the Stage-1 cross-view gate
    fails (3rd.md: should pass by construction with fixed lighting).
-3. **Cross-view reprojection eval gate** (`evaluate.cross_view_reprojection_gate`) — the
+2. **Cross-view reprojection eval gate** (`evaluate.cross_view_reprojection_gate`) — the
    advisor's consistency check; same paired-view machinery.
 
 ## Staged plan (3rd.md)
