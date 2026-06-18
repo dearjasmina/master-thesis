@@ -721,7 +721,7 @@ def main():
     with open(tissue_ids_path, "w") as f:
         json.dump({"background_id": 0, "tissues": tissue_id_map}, f, indent=2)
 
-    print("\n[2/3] Rendering 15-view manifold...")
+    print("\n[2/3] Rendering 20-view manifold...")
     generated_samples = []
     view_id = 0
 
