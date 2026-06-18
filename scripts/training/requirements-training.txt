@@ -1,0 +1,16 @@
+# Training pipeline deps — install into the project venv:
+#   venv/bin/pip install -r scripts/training/requirements-training.txt
+#
+# torch / torchvision are assumed already present (CUDA build on the L4 server).
+# Pin torch to the CUDA build matching the cluster driver; do NOT install the CPU
+# wheel there.
+
+torch>=2.1
+torchvision>=0.16
+numpy>=1.24
+opencv-python-headless>=4.8
+scikit-image>=0.21      # PSNR / SSIM in evaluate.py
+lpips>=0.1.4            # optional perceptual loss + eval metric
+OpenEXR>=3.2            # multilayer render.exr reader (Depth/Normal/IndexOB passes)
+tqdm>=4.65
+Pillow>=9.0
