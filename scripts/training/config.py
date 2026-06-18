@@ -64,6 +64,18 @@ class DataConfig:
 
     num_workers: int = 8
 
+    # ── Split (see splits.py) ────────────────────────────────────────────────
+    # Deterministic hash-based, volume-level, STABLE under dataset growth: each
+    # subject's bucket depends only on its own id, so new subjects slot in without
+    # reshuffling existing train/val/test (the dataset is still being generated).
+    val_frac: float = 0.075
+    test_frac: float = 0.075
+    split_seed: int = 1337
+    # 0 = keep all subjects. Low-tissue subjects were confirmed to be legitimate
+    # limited-FOV CT scans (coherent upper-chest / pelvis clusters), not broken
+    # extractions — so we keep them. Raise only to exclude truly-degenerate cases.
+    min_tissues: int = 0
+
 
 @dataclass
 class ModelConfig:
