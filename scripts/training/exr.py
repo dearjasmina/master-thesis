@@ -28,6 +28,50 @@ _RGB_ORDER = ["R", "G", "B"]
 _XYZ_ORDER = ["X", "Y", "Z"]
 
 
+_COMPRESSION = {0: "NONE", 1: "RLE", 2: "ZIPS", 3: "ZIP", 4: "PIZ",
+                5: "PXR24", 6: "B44", 7: "B44A", 8: "DWAA", 9: "DWAB"}
+_PIXTYPE = {0: "UINT", 1: "HALF", 2: "FLOAT"}
+
+
+def peek_exr_header(path: str) -> dict:
+    """
+    Parse an EXR header with the STANDARD LIBRARY ONLY (no OpenEXR, no numpy).
+    Use this to confirm which passes/channels a render.exr actually contains and
+    its compression codec — works on any Python, no installs.
+    """
+    with open(path, "rb") as f:
+        buf = f.read(1 << 20)  # 1 MB is far more than any header needs
+    import struct
+    if struct.unpack("<I", buf[:4])[0] != 20000630:
+        raise ValueError("not an EXR file (bad magic)")
+    pos = 8  # skip magic(4) + version(4)
+
+    def cstr(p):
+        e = buf.index(b"\x00", p)
+        return buf[p:e].decode("latin-1"), e + 1
+
+    channels, compression, data_window = [], None, None
+    while pos < len(buf) and buf[pos] != 0:
+        name, pos = cstr(pos)
+        atype, pos = cstr(pos)
+        size = struct.unpack("<i", buf[pos:pos + 4])[0]; pos += 4
+        val = buf[pos:pos + size]; pos += size
+        if name == "channels":
+            cp = 0
+            while cp < len(val) and val[cp] != 0:
+                e = val.index(b"\x00", cp)
+                cname = val[cp:e].decode("latin-1"); cp = e + 1
+                ptype = struct.unpack("<i", val[cp:cp + 4])[0]; cp += 4
+                cp += 1 + 3 + 4 + 4  # pLinear + reserved + x/ySampling
+                channels.append((cname, _PIXTYPE.get(ptype, ptype)))
+        elif name == "compression" and size >= 1:
+            compression = _COMPRESSION.get(val[0], val[0])
+        elif name == "dataWindow" and size >= 16:
+            xmin, ymin, xmax, ymax = struct.unpack("<iiii", val[:16])
+            data_window = (xmax - xmin + 1, ymax - ymin + 1)
+    return {"channels": channels, "compression": compression, "size": data_window}
+
+
 def _split_channel(name: str):
     """'ViewLayer.Combined.R' → (pass_segment='Combined', component='R')."""
     parts = name.split(".")
@@ -156,14 +200,21 @@ def read_render_exr(path: str, want=("image", "depth", "normal", "indexob")) -> 
 
 if __name__ == "__main__":
     import sys
-    p = sys.argv[1]
-    chans = _read_all_channels(p)
-    print(f"{len(chans)} channels:")
-    for k in sorted(chans):
-        print("  ", k, chans[k].shape, chans[k].dtype)
-    single, multi = _group_by_pass(chans)
-    print("single-channel passes:", sorted(single.keys()))
-    print("merged passes:", sorted(multi.keys()))
-    got = read_render_exr(p)
-    for k, v in got.items():
-        print(f"  {k}: {v.shape}  min={v.min():.4g} max={v.max():.4g}")
+    args = [a for a in sys.argv[1:] if a != "--full"]
+    full = "--full" in sys.argv
+    p = args[0]
+
+    # Default: stdlib-only header peek (NO OpenEXR, NO numpy needed).
+    hdr = peek_exr_header(p)
+    print(f"compression={hdr['compression']}  size={hdr['size']}  "
+          f"{len(hdr['channels'])} channels:")
+    for name, ptype in hdr["channels"]:
+        print(f"   {name:<32} {ptype}")
+    passes = sorted({n.split('.')[-2] if '.' in n else n for n, _ in hdr["channels"]})
+    print("pass segments:", passes)
+
+    if full:  # requires OpenEXR
+        got = read_render_exr(p)
+        print("decoded:")
+        for k, v in got.items():
+            print(f"   {k}: {v.shape}  min={v.min():.4g} max={v.max():.4g}")
