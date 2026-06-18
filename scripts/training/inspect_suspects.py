@@ -23,8 +23,8 @@ import json
 import argparse
 from pathlib import Path
 
-import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from exr import read_render_exr
@@ -32,6 +32,13 @@ from exr import read_render_exr
 THUMB = 256
 HEADER = 54
 EMPTY_FRAC = 0.01   # below this foreground fraction → flag as likely broken/empty
+
+try:
+    _font_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+    _font_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
+except Exception:
+    _font_lg = ImageFont.load_default()
+    _font_sm = ImageFont.load_default()
 
 
 def tissue_map(subj_dir: Path):
@@ -49,21 +56,23 @@ def fg_fraction(view_dir: Path) -> float:
 
 
 def thumb_with_header(view_dir: Path, subject: str, tissues, fg: float):
-    img = cv2.imread(str(view_dir / "rgb_preview.png"), cv2.IMREAD_COLOR)
-    if img is None:
-        img = np.zeros((THUMB, THUMB, 3), np.uint8)
-        cv2.putText(img, "NO PREVIEW", (20, THUMB // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    img = cv2.resize(img, (THUMB, THUMB))
-    canvas = np.full((THUMB + HEADER, THUMB, 3), 30, np.uint8)
-    canvas[HEADER:] = img
+    try:
+        pil_img = Image.open(view_dir / "rgb_preview.png").convert("RGB")
+        pil_img = pil_img.resize((THUMB, THUMB), Image.LANCZOS)
+    except Exception:
+        pil_img = Image.new("RGB", (THUMB, THUMB), (0, 0, 0))
+        ImageDraw.Draw(pil_img).text((20, THUMB // 2), "NO PREVIEW", fill=(255, 0, 0), font=_font_lg)
+    canvas = Image.new("RGB", (THUMB, THUMB + HEADER), (30, 30, 30))
+    canvas.paste(pil_img, (0, HEADER))
+    draw = ImageDraw.Draw(canvas)
     broken = (not np.isnan(fg)) and fg < EMPTY_FRAC
-    col = (0, 0, 255) if broken else (255, 255, 255)
+    col = (255, 0, 0) if broken else (255, 255, 255)
     fgtxt = "n/a" if np.isnan(fg) else f"{fg*100:.1f}%"
-    cv2.putText(canvas, f"{subject}  ({len(tissues)}t)  fg={fgtxt}{'  BROKEN?' if broken else ''}",
-                (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1)
+    draw.text((6, 4), f"{subject}  ({len(tissues)}t)  fg={fgtxt}{'  BROKEN?' if broken else ''}",
+              fill=col, font=_font_lg)
     short = ", ".join(t.replace("_", " ")[:12] for t in tissues)[:46]
-    cv2.putText(canvas, short, (6, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 220, 180), 1)
-    return canvas
+    draw.text((6, 22), short, fill=(180, 220, 180), font=_font_sm)
+    return np.array(canvas)
 
 
 def main():
@@ -109,7 +118,7 @@ def main():
         for i, t in enumerate(tiles):
             r, c = divmod(i, cols)
             grid[r*h:(r+1)*h, c*w:(c+1)*w] = t
-        cv2.imwrite(str(out / "montage.png"), grid)
+        Image.fromarray(grid).save(str(out / "montage.png"))
         print(f"[done] montage → {out/'montage.png'}  ({rows_n}x{cols})")
 
     flagged = [r[0] for r in rows if r[4] == "BROKEN?"]
