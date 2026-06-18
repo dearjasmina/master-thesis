@@ -86,8 +86,19 @@ class PairedRenderDataset(Dataset):
         if not subjects:
             raise RuntimeError(f"no subjects with v*/meta.json under {root.resolve()}")
 
-        split_map = assign_splits(subjects, cfg)
-        self.subjects = [s for s in subjects if split_map.get(s) == split]
+        # Subject selection. Explicit --subjects overrides the split entirely
+        # (used for the overfit sanity test); otherwise filter by split.
+        if self.dcfg.subjects:
+            requested = list(self.dcfg.subjects)
+            self.subjects = [s for s in requested if s in subjects]
+            missing = [s for s in requested if s not in subjects]
+            if missing:
+                print(f"[data] WARNING: requested subjects not found: {missing}")
+        else:
+            split_map = assign_splits(subjects, cfg)
+            self.subjects = [s for s in subjects if split_map.get(s) == split]
+        if self.dcfg.max_subjects > 0:
+            self.subjects = self.subjects[:self.dcfg.max_subjects]
 
         # Build flat list of view samples.
         self.samples: List[Dict] = []
