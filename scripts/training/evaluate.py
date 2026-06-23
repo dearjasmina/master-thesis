@@ -49,12 +49,16 @@ def cross_view_reprojection_gate(*args, **kwargs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
-    ap.add_argument("--preset", default="full1024", choices=["proto512", "full1024", "rgb_only"])
+    ap.add_argument("--preset", default="full1024", choices=["proto512", "full1024", "rgb_only", "overfit"])
     ap.add_argument("--data-root", default=None)
     ap.add_argument("--split", default="test")
     ap.add_argument("--target", default=None, choices=["preview_png", "exr_agx", "exr_linear"])
     ap.add_argument("--input-buffers", default=None)
+    ap.add_argument("--exclude-file", default=None,
+                    help="JSON list of 'subject/view' to drop (e.g. results/framing/exclude.json)")
     ap.add_argument("--max-samples", type=int, default=0, help="0 = all")
+    ap.add_argument("--worst", type=int, default=0,
+                    help="also dump seg|fake|GT grids for the K worst-LPIPS views (diagnosis)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -63,6 +67,7 @@ def main():
     if args.target: cfg.data.target = args.target
     if args.input_buffers:
         cfg.data.input_buffers = [b.strip() for b in args.input_buffers.split(",") if b.strip()]
+    if args.exclude_file: cfg.data.exclude_file = args.exclude_file
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     G = define_G(cfg).to(device).eval()
@@ -95,17 +100,36 @@ def main():
             psnr = float(psnr_fn(r01, f01, data_range=1.0))
             ssim = float(ssim_fn(r01, f01, data_range=1.0, channel_axis=2))
             lp = float(lpips_net(fake, real).mean()) if lpips_net is not None else float("nan")
-            rows.append({"subject": b["subject"], "view": b["view"],
+            rows.append({"idx": i, "subject": b["subject"], "view": b["view"],
                          "psnr": psnr, "ssim": ssim, "lpips": lp})
 
             if i < 16:
-                grid = np.concatenate([r01, f01], axis=1)
+                seg01 = np.clip(to01(b["input"][:3]), 0, 1)   # flat seg input
+                grid = np.concatenate([seg01, f01, r01], axis=1)  # seg | fake | GT
                 cv2.imwrite(str(out_dir / "grids" / f"{b['subject']}_{b['view']}.png"),
                             cv2.cvtColor((grid * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
 
+    # Worst-K offenders by LPIPS — the most diagnostic views.
+    if args.worst > 0 and rows:
+        worst = sorted(rows, key=lambda r: r["lpips"], reverse=True)[:args.worst]
+        (out_dir / "worst").mkdir(parents=True, exist_ok=True)
+        with torch.no_grad():
+            for r in worst:
+                b = ds[r["idx"]]
+                fake = G(b["input"].unsqueeze(0).to(device))
+                seg01 = np.clip(to01(b["input"][:3]), 0, 1)
+                f01 = np.clip(to01(fake[0]), 0, 1)
+                r01 = np.clip(to01(b["target"]), 0, 1)
+                grid = np.concatenate([seg01, f01, r01], axis=1)  # seg | fake | GT
+                name = f"lpips{r['lpips']:.3f}_psnr{r['psnr']:.1f}_{r['subject']}_{r['view']}.png"
+                cv2.imwrite(str(out_dir / "worst" / name),
+                            cv2.cvtColor((grid * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+        print(f"[eval] dumped {len(worst)} worst-LPIPS grids → {out_dir/'worst'}")
+
     csv_path = out_dir / f"metrics_{args.split}.csv"
     with open(csv_path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["subject", "view", "psnr", "ssim", "lpips"])
+        w = csv.DictWriter(f, fieldnames=["subject", "view", "psnr", "ssim", "lpips"],
+                           extrasaction="ignore")
         w.writeheader(); w.writerows(rows)
 
     arr = lambda k: np.array([r[k] for r in rows], dtype=np.float64)

@@ -86,6 +86,14 @@ def parse_args():
                    help="comma list of subject ids to train on, ignoring the split (overfit test)")
     p.add_argument("--max-subjects", type=int, default=None,
                    help="cap the (post-split) subject list to the first N (0 = all)")
+    p.add_argument("--exclude-file", default=None,
+                   help="JSON list of 'subject/view' to drop (e.g. results/framing/exclude.json)")
+    # Loss-weight overrides (handy for a pure-regression overfit test: --w-gan 0 --w-fm 0).
+    p.add_argument("--w-l1", type=float, default=None)
+    p.add_argument("--w-vgg", type=float, default=None)
+    p.add_argument("--w-gan", type=float, default=None)
+    p.add_argument("--w-fm", type=float, default=None)
+    p.add_argument("--w-lpips", type=float, default=None)
     p.add_argument("--resume", default=None)
     return p.parse_args()
 
@@ -106,6 +114,12 @@ def build_config(args):
     if args.num_workers is not None: c.data.num_workers = args.num_workers
     if args.subjects:      c.data.subjects = [s.strip() for s in args.subjects.split(",") if s.strip()]
     if args.max_subjects is not None: c.data.max_subjects = args.max_subjects
+    if args.exclude_file: c.data.exclude_file = args.exclude_file
+    if args.w_l1 is not None:    c.loss.w_l1 = args.w_l1
+    if args.w_vgg is not None:   c.loss.w_vgg = args.w_vgg
+    if args.w_gan is not None:   c.loss.w_gan = args.w_gan
+    if args.w_fm is not None:    c.loss.w_fm = args.w_fm
+    if args.w_lpips is not None: c.loss.w_lpips = args.w_lpips
     if args.resume:        c.train.resume = args.resume
     return c
 
