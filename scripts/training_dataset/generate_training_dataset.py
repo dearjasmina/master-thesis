@@ -59,8 +59,8 @@ def get_args():
     ap.add_argument("--size",   type=int, default=1024)
     ap.add_argument("--device", default="CPU", choices=["CPU", "GPU"])
     # Fraction of the frame the organ bounding-sphere should fill (camera framing).
-    # 0.7 = prominent with margin; raise toward 0.85 if shots look too zoomed out.
-    ap.add_argument("--fill",   type=float, default=0.7)
+    # 0.8 validated on s1340; raise toward 0.85 for tighter, lower for more margin.
+    ap.add_argument("--fill",   type=float, default=0.8)
     # Reference organ scale (metres) at which the base light energies are correct.
     # Exposure is held constant across organ sizes via energy ∝ (scene_scale/ref)².
     # Lower → brighter; raise if renders are overexposed, lower if too dark.
@@ -178,22 +178,26 @@ def setup_render(spp, size, device):
     scene.view_settings.exposure = 0.0
     scene.unit_settings.system = 'METRIC'
 
-    # Enable Cycles render passes — all land in render.exr (OPEN_EXR).
-    # Computed at zero extra render cost alongside the GT RGB pass.
+    # Enable ONLY the G-buffer passes the training pipeline conditions on. These land
+    # in render.exr (OPEN_EXR_MULTILAYER) at zero extra render cost. Disabling a pass
+    # does NOT change the rendered image — passes are side-channels, not part of the
+    # shading. The diffuse/glossy/volume light-DECOMPOSITION passes are intentionally
+    # OFF: they aren't G-buffers, the architecture never uses them, and they would
+    # ~2–3× the EXR size across 24k frames. Re-enable per-experiment if ever needed.
     vl = scene.view_layers[0]
-    vl.use_pass_z               = True  # metric depth (metres)
-    vl.use_pass_normal          = True  # world-space normals [-1,1]
-    vl.use_pass_object_index    = True  # tissue IDs (obj.pass_index)
-    vl.use_pass_diffuse_direct  = True  # direct illumination
-    vl.use_pass_diffuse_indirect = True  # indirect / GI
-    vl.use_pass_diffuse_color   = True  # albedo (material colour, no lighting)
-    vl.use_pass_glossy_direct   = True  # specular direct
-    vl.use_pass_glossy_indirect = True  # specular indirect
+    vl.use_pass_z            = True   # metric depth (metres)        — G-buffer
+    vl.use_pass_normal       = True   # world-space normals [-1,1]   — G-buffer
+    vl.use_pass_object_index = True   # tissue IDs (obj.pass_index)  — G-buffer
+    vl.use_pass_diffuse_direct   = False
+    vl.use_pass_diffuse_indirect = False
+    vl.use_pass_diffuse_color    = False
+    vl.use_pass_glossy_direct    = False
+    vl.use_pass_glossy_indirect  = False
     try:
-        vl.use_pass_volume_direct   = True  # atmospheric scatter direct
-        vl.use_pass_volume_indirect = True  # atmospheric scatter indirect
+        vl.use_pass_volume_direct   = False
+        vl.use_pass_volume_indirect = False
     except AttributeError:
-        pass  # removed in Blender 5.x — VolumeDir/VolumeInd won't appear in EXR
+        pass  # not present in Blender 5.x
 
 
 def setup_compositor(scene):
@@ -906,8 +910,13 @@ def main():
             #
             # rgb_preview.png = AgX tone-mapped PNG, for human inspection only.
             # Do NOT train on the PNG — it has baked-in tone mapping.
+            # OPEN_EXR_MULTILAYER (not plain OPEN_EXR!) so ALL the passes enabled in
+            # setup_render — Depth, Normal, IndexOB, DiffDir/Ind/Col, GlossDir/Ind, ...
+            # — are written, not just the combined RGBA. These are the G-buffers the
+            # training pipeline conditions on; they're computed for free during the
+            # Cycles render. (Plain OPEN_EXR silently dropped them in earlier data.)
             scene = bpy.context.scene
-            scene.render.image_settings.file_format = 'OPEN_EXR'
+            scene.render.image_settings.file_format = 'OPEN_EXR_MULTILAYER'
             scene.render.image_settings.color_depth = '32'
             exr_path = view_dir / "render.exr"
             scene.render.filepath = str(exr_path)
