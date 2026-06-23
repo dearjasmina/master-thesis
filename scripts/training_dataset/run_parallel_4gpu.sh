@@ -11,12 +11,11 @@
 
 set -euo pipefail
 
-DATASET="${DATASET:-/home/vulovic/jasmina/dataset}"
+DATASET="${DATASET:-/mnt/data/vulovic/dataset}"
 SPP=384
 SIZE=1024
 DEVICE="GPU"
 GPU_COUNT=4
-TOTAL_SUBJECTS=1228
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -28,6 +27,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 mkdir -p logs
+
+# Split across GPUs by the number of subjects that actually have extracted meshes
+# (matches the subject discovery in run_dataset_generation.sh), so the 4 ranges are
+# balanced and none of them runs off the end of the list. Override: TOTAL_SUBJECTS=N bash ...
+if [[ -z "${TOTAL_SUBJECTS:-}" ]]; then
+    TOTAL_SUBJECTS=0
+    for d in data/meshes/*/; do
+        if compgen -G "${d}"*.obj > /dev/null 2>&1; then
+            TOTAL_SUBJECTS=$(( TOTAL_SUBJECTS + 1 ))
+        fi
+    done
+fi
+if (( TOTAL_SUBJECTS == 0 )); then
+    echo "ERROR: no subjects with meshes under data/meshes — run extract_meshes.py first."
+    exit 1
+fi
 
 PER_GPU=$(( (TOTAL_SUBJECTS + GPU_COUNT - 1) / GPU_COUNT ))
 
