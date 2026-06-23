@@ -141,28 +141,32 @@ class PairedRenderDataset(Dataset):
         return len(self.samples)
 
     # ── per-buffer loaders (return HxWxC float32, normalised to [-1,1]) ───────
-    def _load_seg_rgb(self, d: Path, exr) -> np.ndarray:
+    # G-buffers are SEPARATE single-layer EXRs written by generate_training_dataset.py
+    # (depth.exr / normals.exr / segid.exr) — each stores its data in the RGB channels.
+    def _load_seg_rgb(self, d: Path) -> np.ndarray:
         img = cv2.imread(str(d / "seg.png"), cv2.IMREAD_COLOR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         return img * 2.0 - 1.0
 
-    def _load_depth(self, d: Path, exr, meta) -> np.ndarray:
-        depth = exr["depth"].astype(np.float32)
+    def _load_depth(self, d: Path, meta) -> np.ndarray:
+        got = read_render_exr(str(d / "depth.exr"), want=("image",))
+        depth = got["image"][..., 0].astype(np.float32)   # metric Z (metres)
         ref = float(meta.get("depth_metric_ref", 1.0)) or 1.0
         depth = np.clip(depth / ref, 0.0, 1.0)[..., None]
         return depth * 2.0 - 1.0
 
-    def _load_normals(self, d: Path, exr, meta) -> np.ndarray:
-        n = exr["normal"].astype(np.float32)              # world-space [-1,1]
+    def _load_normals(self, d: Path, meta) -> np.ndarray:
+        got = read_render_exr(str(d / "normals.exr"), want=("image",))
+        n = np.clip(got["image"][..., :3].astype(np.float32) * 2.0 - 1.0, -1.0, 1.0)  # (N+1)/2 → [-1,1]
         if self.dcfg.normals_space == "camera":
             c2w = np.asarray(meta["cam_to_world"], dtype=np.float32)
             R = c2w[:3, :3]                                # cam→world rotation
-            flat = n.reshape(-1, 3) @ R                    # world→cam = n @ R (= R^T·n)
-            n = flat.reshape(n.shape).astype(np.float32)
-        return np.clip(n, -1.0, 1.0)
+            n = (n.reshape(-1, 3) @ R).reshape(n.shape).astype(np.float32)  # world→cam
+        return n
 
-    def _load_segid(self, d: Path, exr) -> np.ndarray:
-        ids = np.rint(exr["indexob"]).astype(np.float32)
+    def _load_segid(self, d: Path) -> np.ndarray:
+        got = read_render_exr(str(d / "segid.exr"), want=("image",))
+        ids = np.rint(got["image"][..., 0]).astype(np.float32)
         ids = ids / float(max(self.num_classes, 1))
         return np.clip(ids, 0.0, 1.0)[..., None] * 2.0 - 1.0
 
@@ -185,22 +189,18 @@ class PairedRenderDataset(Dataset):
         d: Path = rec["dir"]
         meta = json.load(open(d / "meta.json"))
 
-        # Decide which EXR passes we actually need.
-        need = set()
+        # GT image from render.exr only needed for the exr_* targets (preview_png doesn't).
         bufs = self.dcfg.input_buffers
-        if "depth" in bufs:   need.add("depth")
-        if "normals" in bufs: need.add("normal")
-        if "segid" in bufs:   need.add("indexob")
-        if self.dcfg.target in ("exr_agx", "exr_linear"): need.add("image")
-        exr = read_render_exr(str(d / "render.exr"), want=tuple(need)) if need else {}
+        exr = (read_render_exr(str(d / "render.exr"), want=("image",))
+               if self.dcfg.target in ("exr_agx", "exr_linear") else {})
 
-        # Build input stack in configured order.
+        # Build input stack in configured order (G-buffers read their own EXR files).
         planes: List[np.ndarray] = []
         for b in bufs:
-            if b == "seg_rgb":  planes.append(self._load_seg_rgb(d, exr))
-            elif b == "depth":  planes.append(self._load_depth(d, exr, meta))
-            elif b == "normals":planes.append(self._load_normals(d, exr, meta))
-            elif b == "segid":  planes.append(self._load_segid(d, exr))
+            if b == "seg_rgb":  planes.append(self._load_seg_rgb(d))
+            elif b == "depth":  planes.append(self._load_depth(d, meta))
+            elif b == "normals":planes.append(self._load_normals(d, meta))
+            elif b == "segid":  planes.append(self._load_segid(d))
             else: raise ValueError(f"unknown input buffer '{b}'")
         target = self._load_target(d, exr)
 
