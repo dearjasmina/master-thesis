@@ -58,6 +58,9 @@ def get_args():
     ap.add_argument("--spp",    type=int, default=384)
     ap.add_argument("--size",   type=int, default=1024)
     ap.add_argument("--device", default="CPU", choices=["CPU", "GPU"])
+    # Fraction of the frame the organ bounding-sphere should fill (camera framing).
+    # 0.7 = prominent with margin; lower = more zoomed out.
+    ap.add_argument("--fill",   type=float, default=0.7)
     return ap.parse_args(argv)
 
 
@@ -503,6 +506,30 @@ def import_obj(obj_path):
     return new_objs[0] if new_objs else None
 
 
+def organ_bbox_world(objs_with_mats):
+    """
+    World-space bounding box of all loaded organ meshes.
+    Returns (center[3], sphere_radius, max_extent). The camera is framed on THIS
+    (the actual organs) instead of the CT volume, so framing is consistent across
+    subjects regardless of scan size / organ set / off-centring.
+    """
+    import mathutils
+    bpy.context.view_layer.update()
+    mn = [float("inf")] * 3
+    mx = [float("-inf")] * 3
+    for obj, _, _ in objs_with_mats:
+        mw = obj.matrix_world
+        for corner in obj.bound_box:           # 8 local-space corners
+            w = mw @ mathutils.Vector(corner)  # → world space
+            for i in range(3):
+                mn[i] = min(mn[i], w[i])
+                mx[i] = max(mx[i], w[i])
+    center = [(mn[i] + mx[i]) / 2.0 for i in range(3)]
+    radius = 0.5 * math.sqrt(sum((mx[i] - mn[i]) ** 2 for i in range(3)))  # bounding sphere
+    extent = max(mx[i] - mn[i] for i in range(3))
+    return center, radius, extent
+
+
 # ── Lighting — identical to v20 ───────────────────────────────────────────────
 
 def setup_lights(cx, cy, cz, scene_scale):
@@ -633,15 +660,22 @@ def main():
         print(f"ERROR: mesh_dir not found: {mesh_dir}")
         sys.exit(1)
 
-    import nibabel as nib
-    ct_img   = nib.load(str(Path(args.dataset) / args.subject / "ct.nii.gz"))
-    shape    = ct_img.shape[:3]
-    zooms    = ct_img.header.get_zooms()[:3]
-    nx, ny, nz = shape
-    sx, sy, sz = zooms
-    cx, cy, cz  = float(nx*sx/2/1000), float(ny*sy/2/1000), float(nz*sz/2/1000)
-    radius      = float(max(nx*sx, ny*sy, nz*sz) * 0.9 / 1000)
-    scene_scale = float(max(nx*sx, ny*sy, nz*sz) / 1000)
+    # CT is now only a FALLBACK for framing — the camera is framed on the organ
+    # bounding box once meshes load (see below). So the source CT being absent
+    # (e.g. deleted to save space) is fine; we frame purely from the meshes.
+    cx = cy = cz = 0.0
+    radius = scene_scale = 0.1
+    ct_path = Path(args.dataset) / args.subject / "ct.nii.gz"
+    if ct_path.exists():
+        import nibabel as nib
+        ct_img = nib.load(str(ct_path))
+        nx, ny, nz = ct_img.shape[:3]
+        sx, sy, sz = ct_img.header.get_zooms()[:3]
+        cx, cy, cz  = float(nx*sx/2/1000), float(ny*sy/2/1000), float(nz*sz/2/1000)
+        radius      = float(max(nx*sx, ny*sy, nz*sz) * 0.9 / 1000)
+        scene_scale = float(max(nx*sx, ny*sy, nz*sz) / 1000)
+    else:
+        print(f"  [info] no CT at {ct_path} — framing purely from organ meshes")
 
     # 20-view full-orbit manifold — 5 azimuths evenly around 360° × 4 elevations.
     # -50° = true bottom-up; 0° = equatorial; 30° = mid; 60° = overhead.
@@ -664,23 +698,9 @@ def main():
     reset_scene()
     setup_render(args.spp, args.size, args.device)
     cam_obj = setup_camera(args.size)
-    setup_lights(cx, cy, cz, scene_scale)
-    add_negative_fill_planes(cx, cy, cz, scene_scale)
     setup_compositor(bpy.context.scene)
-
-    # Depth, normals, IndexOB, and light passes are now captured as Cycles render
-    # passes inside render.exr (OPEN_EXR).  The material-based EEVEE
-    # pass functions (make_depth_material etc.) are kept for ad-hoc debugging.
-
-    # Cache baseline light properties — jitter is applied relative to these each view
-    # so that accumulated drift across views doesn't happen.
-    light_baselines = {}
-    for obj in bpy.data.objects:
-        if obj.type == 'LIGHT':
-            light_baselines[obj.name] = {
-                'energy': obj.data.energy,
-                'color':  list(obj.data.color),
-            }
+    # NOTE: lights + negative-fill planes are placed AFTER the meshes load, so they
+    # can be framed on the organ bounding box rather than the CT volume (see below).
 
     print("\n[1/3] Loading meshes and materials...")
     objs_with_mats = []
@@ -714,6 +734,34 @@ def main():
         tissue_id_map[seg_name] = loaded + 1
         loaded += 1
     print(f"  {loaded} tissues loaded")
+
+    # ── Frame the camera/lights on the ORGAN bounding box (not the CT volume) ──
+    # The CT-volume framing doesn't transfer across subjects (whole-body scans,
+    # off-centre / sparse organ sets → tiny or clipped shots). Deriving the orbit
+    # centre + radius + scale from the actual loaded meshes makes framing consistent
+    # for every subject. Falls back to the CT estimate if nothing loaded.
+    if loaded > 0:
+        (cx, cy, cz), radius, extent = organ_bbox_world(objs_with_mats)
+        scene_scale = float(extent)
+        print(f"  organ bbox: center=({cx:.3f},{cy:.3f},{cz:.3f}) "
+              f"sphere_r={radius:.3f} extent={extent:.3f}")
+    else:
+        print("  [warn] no meshes loaded — falling back to CT-volume framing")
+
+    # Lights + negative-fill placed relative to the organ bbox (moved here from
+    # before mesh loading so their scale/position track the organs).
+    setup_lights(cx, cy, cz, scene_scale)
+    add_negative_fill_planes(cx, cy, cz, scene_scale)
+
+    # Cache baseline light properties — per-view jitter is applied relative to these
+    # so accumulated drift across views doesn't happen.
+    light_baselines = {}
+    for obj in bpy.data.objects:
+        if obj.type == 'LIGHT':
+            light_baselines[obj.name] = {
+                'energy': obj.data.energy,
+                'color':  list(obj.data.color),
+            }
 
     # Write the tissue→ID mapping once per subject (training code uses this to
     # convert segid.exr float values to semantic class labels).
@@ -756,8 +804,13 @@ def main():
             # reproducible: view 1 of s0050 always has the same jitter.
             az_j   = float(az_nom  + rng.uniform(-2.5,  2.5))
             el_j   = float(el_nom  + rng.uniform(-2.0,  2.0))
-            dist_j = float(radius  * 1.9 * rng.uniform(0.94, 1.06))
             fov_j  = float(rng.uniform(20.0, 24.0))
+            # Distance frames the organ bounding sphere to fill ~args.fill of the
+            # view at this FOV: a sphere of radius R at distance D subtends a
+            # half-angle arcsin(R/D); set that to 0.5*fill*FOV. Robust to subject /
+            # organ-set / scan size. Small jitter keeps the camera from being identical.
+            base_dist = radius / math.sin(0.5 * args.fill * math.radians(fov_j))
+            dist_j = float(base_dist * rng.uniform(0.97, 1.03))
 
             theta = math.radians(az_j)
             phi   = math.radians(el_j)
