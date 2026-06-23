@@ -910,13 +910,12 @@ def main():
             #
             # rgb_preview.png = AgX tone-mapped PNG, for human inspection only.
             # Do NOT train on the PNG — it has baked-in tone mapping.
-            # OPEN_EXR_MULTILAYER (not plain OPEN_EXR!) so ALL the passes enabled in
-            # setup_render — Depth, Normal, IndexOB, DiffDir/Ind/Col, GlossDir/Ind, ...
-            # — are written, not just the combined RGBA. These are the G-buffers the
-            # training pipeline conditions on; they're computed for free during the
-            # Cycles render. (Plain OPEN_EXR silently dropped them in earlier data.)
+            # render.exr = plain single-layer OPEN_EXR holding the scene-linear combined
+            # RGBA (the GT image). NOTE: this Blender (5.x/6.0) removed OPEN_EXR_MULTILAYER
+            # from the format enum, so the G-buffers are written as SEPARATE files below
+            # via the EEVEE pass materials (version-independent, no compositor needed).
             scene = bpy.context.scene
-            scene.render.image_settings.file_format = 'OPEN_EXR_MULTILAYER'
+            scene.render.image_settings.file_format = 'OPEN_EXR'
             scene.render.image_settings.color_depth = '32'
             exr_path = view_dir / "render.exr"
             scene.render.filepath = str(exr_path)
@@ -934,6 +933,15 @@ def main():
                     print(f"  preview → {preview_path}")
             except Exception as e:
                 print(f"  [warn] preview PNG failed: {e}")
+
+            # --- G-buffer passes → separate single-layer EXRs (depth/normals/segid) ---
+            # Fast EEVEE emission renders from the same camera. render_pass restores the
+            # engine/format afterwards; we restore the GT materials before the next view.
+            render_pass(objs_with_mats, make_depth_material(),   cam_obj, view_dir / "depth.exr",   fmt='OPEN_EXR')
+            render_pass(objs_with_mats, make_normals_material(), cam_obj, view_dir / "normals.exr", fmt='OPEN_EXR')
+            render_pass(objs_with_mats, make_segid_material(),   cam_obj, view_dir / "segid.exr",   fmt='OPEN_EXR')
+            restore_gt_materials(objs_with_mats)
+            print(f"  gbuffers → depth.exr normals.exr segid.exr")
 
             # Restore PNG as the default format so the seg render on the next view works.
             scene.render.image_settings.file_format = 'PNG'
