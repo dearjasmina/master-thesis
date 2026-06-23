@@ -100,9 +100,19 @@ class PairedRenderDataset(Dataset):
         if self.dcfg.max_subjects > 0:
             self.subjects = self.subjects[:self.dcfg.max_subjects]
 
+        # Optional per-view exclude list ("subject/view") — e.g. badly-framed views
+        # flagged by score_framing.py.
+        exclude = set()
+        if self.dcfg.exclude_file:
+            try:
+                exclude = set(json.load(open(self.dcfg.exclude_file)))
+            except Exception as e:
+                print(f"[data] WARNING: could not read exclude_file {self.dcfg.exclude_file}: {e}")
+
         # Build flat list of view samples.
         self.samples: List[Dict] = []
         self.num_classes = 1
+        n_excluded = 0
         for s in self.subjects:
             subj_dir = root / s
             ids_path = subj_dir / "tissue_ids.json"
@@ -115,11 +125,17 @@ class PairedRenderDataset(Dataset):
                     pass
             self.num_classes = max(self.num_classes, n_cls)
             for view_dir in sorted(subj_dir.glob("v*")):
-                if (view_dir / "meta.json").exists():
-                    self.samples.append({"subject": s, "dir": view_dir})
+                if not (view_dir / "meta.json").exists():
+                    continue
+                if f"{s}/{view_dir.name}" in exclude:
+                    n_excluded += 1
+                    continue
+                self.samples.append({"subject": s, "dir": view_dir})
+        if exclude:
+            print(f"[data] excluded {n_excluded} badly-framed views (from {self.dcfg.exclude_file})")
 
         if not self.samples:
-            raise RuntimeError(f"split '{split}' has 0 samples (placeholder split puts all in 'train')")
+            raise RuntimeError(f"split '{split}' has 0 samples")
 
     def __len__(self):
         return len(self.samples)

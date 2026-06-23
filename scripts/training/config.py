@@ -83,6 +83,11 @@ class DataConfig:
     subjects: Optional[List[str]] = None
     max_subjects: int = 0
 
+    # Per-view exclude list: path to a JSON array of "subject/view" strings
+    # (e.g. results/framing/exclude.json from score_framing.py) — badly-framed
+    # views are dropped from every split. None = use all views.
+    exclude_file: Optional[str] = None
+
 
 @dataclass
 class ModelConfig:
