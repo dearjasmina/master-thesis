@@ -59,8 +59,12 @@ def get_args():
     ap.add_argument("--size",   type=int, default=1024)
     ap.add_argument("--device", default="CPU", choices=["CPU", "GPU"])
     # Fraction of the frame the organ bounding-sphere should fill (camera framing).
-    # 0.7 = prominent with margin; lower = more zoomed out.
+    # 0.7 = prominent with margin; raise toward 0.85 if shots look too zoomed out.
     ap.add_argument("--fill",   type=float, default=0.7)
+    # Reference organ scale (metres) at which the base light energies are correct.
+    # Exposure is held constant across organ sizes via energy ∝ (scene_scale/ref)².
+    # Lower → brighter; raise if renders are overexposed, lower if too dark.
+    ap.add_argument("--light-ref", type=float, default=0.4)
     return ap.parse_args(argv)
 
 
@@ -532,14 +536,17 @@ def organ_bbox_world(objs_with_mats):
 
 # ── Lighting — identical to v20 ───────────────────────────────────────────────
 
-def setup_lights(cx, cy, cz, scene_scale):
+def setup_lights(cx, cy, cz, scene_scale, energy_scale=1.0):
+    # energy_scale ∝ scene_scale² keeps irradiance (energy/distance²) constant as the
+    # rig scales with organ size, so EXPOSURE is the same for tiny and large organ sets.
     sc = scene_scale
+    es = energy_scale
 
     bpy.ops.object.light_add(type='AREA',
         location=(cx + sc*1.4, cy + sc*0.3, cz + sc*0.8))
     key = bpy.context.object
     key.name        = "KeyLight"   # named so jitter logic targets only this light
-    key.data.energy = 90
+    key.data.energy = 90 * es
     key.data.color  = (1.00, 0.98, 0.96)
     key.data.size   = sc * 0.25
     key.data.shape  = 'SQUARE'
@@ -548,7 +555,7 @@ def setup_lights(cx, cy, cz, scene_scale):
     bpy.ops.object.light_add(type='AREA',
         location=(cx - sc*1.0, cy - sc*1.0, cz + sc*0.5))
     fill = bpy.context.object
-    fill.data.energy = 3.0
+    fill.data.energy = 3.0 * es
     fill.data.color  = (0.96, 0.97, 1.00)
     fill.data.size   = sc * 0.50
     _track_to(fill, (cx, cy, cz))
@@ -556,7 +563,7 @@ def setup_lights(cx, cy, cz, scene_scale):
     bpy.ops.object.light_add(type='AREA',
         location=(cx - sc*0.5, cy + sc*1.4, cz + sc*0.3))
     rim1 = bpy.context.object
-    rim1.data.energy = 20
+    rim1.data.energy = 20 * es
     rim1.data.color  = (1.00, 0.94, 0.88)
     rim1.data.size   = sc * 0.02
     _track_to(rim1, (cx, cy, cz))
@@ -564,7 +571,7 @@ def setup_lights(cx, cy, cz, scene_scale):
     bpy.ops.object.light_add(type='AREA',
         location=(cx + sc*0.4, cy - sc*1.4, cz - sc*0.2))
     rim2 = bpy.context.object
-    rim2.data.energy = 21
+    rim2.data.energy = 21 * es
     rim2.data.color  = (0.95, 0.95, 1.00)
     rim2.data.size   = sc * 0.08
     _track_to(rim2, (cx, cy, cz))
@@ -748,10 +755,15 @@ def main():
     else:
         print("  [warn] no meshes loaded — falling back to CT-volume framing")
 
-    # Lights + negative-fill placed relative to the organ bbox (moved here from
-    # before mesh loading so their scale/position track the organs).
-    setup_lights(cx, cy, cz, scene_scale)
-    add_negative_fill_planes(cx, cy, cz, scene_scale)
+    # Lights: proportional rig at organ scale, energy-compensated so EXPOSURE is
+    # constant regardless of organ size (irradiance held fixed). Tune with --light-ref.
+    energy_scale = (scene_scale / max(args.light_ref, 1e-6)) ** 2
+    setup_lights(cx, cy, cz, scene_scale, energy_scale)
+    # Negative-fill planes MUST sit outside the camera orbit, else they occlude the
+    # organs at some azimuths (the "fully black" views). Frame them on the orbit radius
+    # (max camera distance, at the widest FOV), not the small organ scale.
+    orbit_dist = radius / math.sin(0.5 * args.fill * math.radians(20.0))
+    add_negative_fill_planes(cx, cy, cz, orbit_dist)
 
     # Cache baseline light properties — per-view jitter is applied relative to these
     # so accumulated drift across views doesn't happen.
