@@ -35,6 +35,22 @@ from splits import assign_splits
 
 cv2.setNumThreads(0)  # avoid oversubscription with DataLoader workers
 
+# Canonical organ → fixed global ID (1-based), matching the TISSUES order in
+# generate_training_dataset.py. The render stores per-subject pass_index (assigned by
+# load order among PRESENT organs), so the same organ gets different IDs across subjects.
+# We remap each subject's pass_index → this fixed global ID via its tissue_ids.json, so
+# segid is a CONSISTENT organ-identity signal (organ X = same value in every subject).
+CANONICAL_TISSUES = [
+    "autochthon_left", "autochthon_right",
+    "lung_lower_lobe_left", "lung_lower_lobe_right", "lung_upper_lobe_left", "lung_upper_lobe_right",
+    "vertebrae_T12", "vertebrae_L1", "vertebrae_L2", "vertebrae_L3", "vertebrae_L4", "vertebrae_L5",
+    "heart", "esophagus", "liver", "stomach", "gallbladder", "spleen",
+    "kidney_right", "kidney_left", "pancreas", "duodenum", "small_bowel", "colon",
+    "urinary_bladder", "aorta", "inferior_vena_cava", "portal_vein_and_splenic_vein", "superior_vena_cava",
+]
+ORGAN_TO_GID = {name: i + 1 for i, name in enumerate(CANONICAL_TISSUES)}  # 0 = background
+NUM_CANONICAL = len(CANONICAL_TISSUES)  # 29
+
 
 # ── Tonemapping ───────────────────────────────────────────────────────────────
 def agx_tonemap(linear_rgb: np.ndarray) -> np.ndarray:
@@ -109,21 +125,27 @@ class PairedRenderDataset(Dataset):
             except Exception as e:
                 print(f"[data] WARNING: could not read exclude_file {self.dcfg.exclude_file}: {e}")
 
-        # Build flat list of view samples.
+        # Build flat list of view samples + per-subject segid remap LUT
+        # (pass_index → fixed global organ ID).
         self.samples: List[Dict] = []
-        self.num_classes = 1
+        self.num_classes = NUM_CANONICAL
+        self._segid_lut: Dict[str, np.ndarray] = {}
         n_excluded = 0
         for s in self.subjects:
             subj_dir = root / s
             ids_path = subj_dir / "tissue_ids.json"
-            n_cls = 29
+            tissues = {}
             if ids_path.exists():
                 try:
-                    ids = json.load(open(ids_path))
-                    n_cls = max(ids.get("tissues", {}).values(), default=29)
+                    tissues = json.load(open(ids_path)).get("tissues", {})
                 except Exception:
                     pass
-            self.num_classes = max(self.num_classes, n_cls)
+            # LUT indexed by per-subject pass_index → global organ id (0 = background)
+            max_pid = max(tissues.values(), default=0)
+            lut = np.zeros(max_pid + 1, dtype=np.float32)
+            for name, pid in tissues.items():
+                lut[int(pid)] = ORGAN_TO_GID.get(name, 0)
+            self._segid_lut[s] = lut
             for view_dir in sorted(subj_dir.glob("v*")):
                 if not (view_dir / "meta.json").exists():
                     continue
@@ -166,9 +188,15 @@ class PairedRenderDataset(Dataset):
 
     def _load_segid(self, d: Path) -> np.ndarray:
         got = read_render_exr(str(d / "segid.exr"), want=("image",))
-        ids = np.rint(got["image"][..., 0]).astype(np.float32)
-        ids = ids / float(max(self.num_classes, 1))
-        return np.clip(ids, 0.0, 1.0)[..., None] * 2.0 - 1.0
+        pid = np.rint(got["image"][..., 0]).astype(np.int64)   # per-subject pass_index
+        lut = self._segid_lut.get(d.parent.name)
+        if lut is not None:
+            pid = np.clip(pid, 0, len(lut) - 1)
+            gid = lut[pid]                                       # → fixed global organ id
+        else:
+            gid = pid.astype(np.float32)
+        gid = gid / float(NUM_CANONICAL)                        # consistent across subjects
+        return np.clip(gid, 0.0, 1.0)[..., None] * 2.0 - 1.0
 
     def _load_target(self, d: Path, exr) -> np.ndarray:
         t = self.dcfg.target
