@@ -75,17 +75,49 @@ def load_input(view_dir: Path, cfg, lut: np.ndarray) -> np.ndarray:
     return np.concatenate(planes, axis=-1)
 
 
+def render_view(G, vdir, cfg, lut, device):
+    x = load_input(vdir, cfg, lut)
+    t = torch.from_numpy(x.transpose(2, 0, 1)).unsqueeze(0).float().to(device)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    with torch.no_grad():
+        fake = G(t)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    dt = (time.perf_counter() - t0) * 1000
+    img = ((fake[0].detach().float().cpu().clamp(-1, 1) + 1) * 127.5).numpy().astype(np.uint8).transpose(1, 2, 0)
+    return img, dt
+
+
+def montage(imgs, cols=5, th=256):
+    tiles = [cv2.resize(i, (int(i.shape[1] * th / i.shape[0]), th)) for i in imgs]
+    w = max(t.shape[1] for t in tiles)
+    tiles = [np.pad(t, ((0, 0), (0, w - t.shape[1]), (0, 0)), constant_values=15) for t in tiles]
+    rows = []
+    for r in range(0, len(tiles), cols):
+        row = tiles[r:r + cols]
+        while len(row) < cols:
+            row.append(np.zeros_like(tiles[0]))
+        rows.append(np.concatenate(row, axis=1))
+    return np.concatenate(rows, axis=0)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--preset", default="full1024", choices=["proto512", "full1024", "rgb_only", "overfit"])
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--input-buffers", default=None)
     ap.add_argument("--view", default=None, help="a single view dir")
-    ap.add_argument("--subject", default=None, help="a subject dir (renders all its views)")
+    ap.add_argument("--subject", default=None, help="a subject dir (all its views)")
+    ap.add_argument("--data-root", default="data/training_dataset", help="with --split")
+    ap.add_argument("--split", default=None, choices=["train", "val", "test"],
+                    help="infer EVERY subject in this split (per-subject montage you can browse)")
     ap.add_argument("--out", default="results/infer")
     args = ap.parse_args()
 
     cfg = preset(args.preset)
+    cfg.data.root = args.data_root
     if args.input_buffers:
         cfg.data.input_buffers = [b.strip() for b in args.input_buffers.split(",") if b.strip()]
 
@@ -94,36 +126,57 @@ def main():
     G.load_state_dict(torch.load(args.checkpoint, map_location=device)["G"])
     print(f"[infer] {args.checkpoint} | inputs={cfg.data.input_buffers} | device={device}")
 
-    if args.view:
-        views = [Path(args.view)]
-    elif args.subject:
-        views = sorted(p for p in Path(args.subject).glob("v*") if (p / "seg.png").exists())
-    else:
-        ap.error("give --view or --subject")
-
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
+    (out / "montages").mkdir(exist_ok=True)
+
+    # Build the list of subject dirs to process.
+    if args.view:
+        subj_dirs = None
+        single_views = [Path(args.view)]
+    elif args.subject:
+        subj_dirs = [Path(args.subject)]
+    elif args.split:
+        from splits import assign_splits
+        root = Path(args.data_root)
+        subs = [p.name for p in sorted(root.iterdir()) if p.is_dir() and any(p.glob("v*/seg.png"))]
+        sm = assign_splits(subs, cfg)
+        subj_dirs = [root / s for s in subs if sm.get(s) == args.split]
+        print(f"[infer] split={args.split}: {len(subj_dirs)} subjects")
+    else:
+        ap.error("give --view, --subject, or --split")
+
     times = []
-    for vdir in views:
-        lut = build_segid_lut(vdir.parent)
-        x = load_input(vdir, cfg, lut)
-        t = torch.from_numpy(x.transpose(2, 0, 1)).unsqueeze(0).float().to(device)
-        if device.type == "cuda":
-            torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        with torch.no_grad():
-            fake = G(t)
-        if device.type == "cuda":
-            torch.cuda.synchronize()
-        dt = (time.perf_counter() - t0) * 1000
+    if args.view:
+        img, dt = render_view(G, single_views[0], cfg, build_segid_lut(single_views[0].parent), device)
+        cv2.imwrite(str(out / f"{single_views[0].parent.name}_{single_views[0].name}.png"),
+                    cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         times.append(dt)
-        img = ((fake[0].detach().float().cpu().clamp(-1, 1) + 1) * 127.5).numpy().astype(np.uint8).transpose(1, 2, 0)
-        name = f"{vdir.parent.name}_{vdir.name}.png"
-        cv2.imwrite(str(out / name), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        print(f"[infer] {name}  ({dt:.1f} ms)")
+    else:
+        for i, sdir in enumerate(subj_dirs):
+            lut = build_segid_lut(sdir)
+            views = sorted(p for p in sdir.glob("v*") if (p / "seg.png").exists())
+            strips = []
+            for vdir in views:
+                fake, dt = render_view(G, vdir, cfg, lut, device)
+                times.append(dt)
+                cv2.imwrite(str(out / f"{sdir.name}_{vdir.name}.png"), cv2.cvtColor(fake, cv2.COLOR_RGB2BGR))
+                # comparison strip: seg (simple input) | fake (inferred) | GT (if present)
+                h, w = fake.shape[:2]
+                seg = cv2.cvtColor(cv2.imread(str(vdir / "seg.png")), cv2.COLOR_BGR2RGB)
+                parts = [cv2.resize(seg, (w, h)), fake]
+                gt_p = vdir / "rgb_preview.png"
+                if gt_p.exists():
+                    parts.append(cv2.resize(cv2.cvtColor(cv2.imread(str(gt_p)), cv2.COLOR_BGR2RGB), (w, h)))
+                strips.append(np.concatenate(parts, axis=1))  # seg|fake|GT
+            if strips:
+                cv2.imwrite(str(out / "montages" / f"{sdir.name}.png"),
+                            cv2.cvtColor(montage(strips, cols=1), cv2.COLOR_RGB2BGR))
+            if (i + 1) % 10 == 0:
+                print(f"[infer] {i+1}/{len(subj_dirs)} subjects")
 
     if times:
-        t = np.array(times[1:] or times)  # drop first (warm-up) if >1
-        print(f"\n[infer] {len(times)} views → {out}")
+        t = np.array(times[1:] or times)  # drop warm-up
+        print(f"\n[infer] {len(times)} views → {out}  (per-subject montages in {out/'montages'})")
         print(f"[infer] inference: {t.mean():.1f} ms/view (vs minutes/view of path tracing)")
 
 
