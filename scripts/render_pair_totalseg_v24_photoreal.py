@@ -1492,14 +1492,22 @@ def teardown_compositor(scene):
 
 # ── Negative fill / cavity walls ──────────────────────────────────────────────
 
-def add_fill_planes(cx, cy, cz, scene_scale, feat):
+def add_fill_planes(cx, cy, cz, scene_scale, feat, cam_radius=None):
     """v20 used pure black planes, which absorb everything that hits them.
 
     A perfectly black surround is not a negative fill, it is a light sink — it removes
     the wrap-around bounce that makes flesh look soft. These are still far darker than
     any tissue (so they still shape the form) but return a faint warm bounce.
     """
-    sc  = scene_scale
+    # The walls must sit OUTSIDE the camera or they occlude it and the frame renders
+    # black. Before v24, radius was derived from the same quantity as scene_scale, so
+    # walls at 2.0 * scene_scale were always beyond the camera. v24 frames from the
+    # organ bounding box, which makes the camera radius independent of scene_scale and
+    # frequently much larger — so the wall distance has to track the camera, not the
+    # subject.
+    sc = scene_scale
+    wall_d = max(sc * 2.0, (cam_radius or 0.0) * 1.8)
+    span   = max(sc * 4.0, wall_d * 2.4)
     mat = bpy.data.materials.new("CavityWall")
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes.get('Principled BSDF')
@@ -1510,14 +1518,14 @@ def add_fill_planes(cx, cy, cz, scene_scale, feat):
         _set(bsdf, 'Specular IOR Level', 0.1)
 
     def make_plane(loc, rot_euler, name):
-        bpy.ops.mesh.primitive_plane_add(size=sc * 4.0, location=loc)
+        bpy.ops.mesh.primitive_plane_add(size=span, location=loc)
         p = bpy.context.object
         p.rotation_euler = rot_euler
         p.data.materials.append(mat)
         p.name = name
 
-    make_plane((cx - sc*2.0, cy + sc*0.2, cz), (0, math.pi/2, 0), "Wall_Left")
-    make_plane((cx + sc*2.0, cy + sc*0.2, cz), (0, math.pi/2, 0), "Wall_Right")
+    make_plane((cx - wall_d, cy + sc*0.2, cz), (0, math.pi/2, 0), "Wall_Left")
+    make_plane((cx + wall_d, cy + sc*0.2, cz), (0, math.pi/2, 0), "Wall_Right")
 
 
 # ── Lighting ──────────────────────────────────────────────────────────────────
@@ -1890,7 +1898,7 @@ def main():
 
     cam_obj = setup_camera(args.fstop)
     setup_lights(cx, cy, cz, scene_scale, feat, args.key_energy)
-    add_fill_planes(cx, cy, cz, scene_scale, feat)
+    add_fill_planes(cx, cy, cz, scene_scale, feat, cam_radius=radius)
     setup_compositor(bpy.context.scene, feat)
 
     # Materials last — they depend on MM_PER_PX.
