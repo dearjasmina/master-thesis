@@ -294,9 +294,11 @@ def get_args():
                     help="global multiplier on all micro-relief amplitudes")
     ap.add_argument("--vessel_gain",type=float, default=1.0,
                     help="global multiplier on vessel visibility")
-    ap.add_argument("--saturation", type=float, default=1.00,
-                    help="v21 used 1.25, which stacked with AgX Punchy and SSS "
-                         "brightening to give an orange cast")
+    ap.add_argument("--saturation", type=float, default=1.30,
+                    help="pre-compensation for AgX inset desaturation. Swept on the "
+                         "full scene: 1.0 reads washed out, 1.6 overheats the lungs, "
+                         "1.3 matches the reference renders. (v21's 1.25 looked orange "
+                         "only because it stacked with AgX Punchy and raised albedos.)")
     ap.add_argument("--exposure",   type=float, default=-1.30,
                     help="EV offset. v20/v21 rendered liver at RGB ~(196,116,104); "
                          "surgical photographs sit at (110-150, 55-75, 55-70), i.e. "
@@ -305,7 +307,7 @@ def get_args():
     ap.add_argument("--view_transform", default="AgX")
     ap.add_argument("--look",       default="AgX - Medium Contrast",
                     help="v21 used 'AgX - Punchy', which over-saturated the reds")
-    ap.add_argument("--albedo",     type=float, default=0.62,
+    ap.add_argument("--albedo",     type=float, default=1.00,
                     help="global gain on every tissue base colour. v21 raised albedos "
                          "~3x to fight AgX desaturation, then also enabled strong SSS "
                          "(which brightens ABOVE the input albedo) — double-counted.")
@@ -618,6 +620,104 @@ TISSUES = [
                 "superior_vena_cava")],
 ]
 
+# ── Reference-matched appearance ─────────────────────────────────────────────
+#
+# The table above holds physically-derived priors (tissue optics, transport depths).
+# This layer holds APPEARANCE, matched by eye against reference renders of anatomical
+# models, and is deliberately separate so the two never get confused: change this to
+# chase a look, change the table above to change the physics.
+#
+# base        scattering albedo, linear. These are absolute — --albedo defaults to 1.0
+#             now, so what is written here is what renders.
+# perfusion   amplitude of the blood-content field. Values below ~0.4 are invisible
+#             once subsurface scattering compresses them; 0.5-0.7 reads as tissue.
+# vessel      surface vasculature coverage. Needs vessel_col to CONTRAST with base —
+#             on a dark organ a dark vessel disappears no matter how high this goes.
+# hue_shift   keep <= 0.02. At 0.04 the hue rotation pushes tissue into yellow-green.
+#
+# Verified per organ by rendering in isolation and comparing to reference; see the
+# per-organ notes for what each was matched against.
+REFERENCE_LOOK = {
+    # Salmon-pink, strong irregular mottling, fine dark vessel tracery.
+    # Was pure white plastic — the single worst offender in the v23 scene render.
+    "lung": dict(base=(0.52, 0.22, 0.21), perfusion=0.60, vessel=0.70,
+                 vessel_mm=16.0, vessel_col=(0.10, 0.020, 0.030), hue_shift=0.015),
+    # Deep burgundy-brown, glossy capsule, large tonal zones, vessels subtle —
+    # in the references the liver reads smooth and dark, not heavily veined.
+    # Tuned by sweep: 0.26 red read as orange, and hue_shift 0.018 pushed patches into
+    # visible yellow-green. Deeper and browner, with the hue drift almost off.
+    "liver": dict(base=(0.20, 0.050, 0.045), perfusion=0.60, vessel=0.30,
+                  vessel_mm=34.0, vessel_col=(0.070, 0.014, 0.026), hue_shift=0.005),
+    "spleen": dict(base=(0.19, 0.042, 0.068), perfusion=0.55, vessel=0.26,
+                   vessel_mm=30.0, vessel_col=(0.065, 0.013, 0.042), hue_shift=0.007),
+    "kidney": dict(base=(0.28, 0.085, 0.070), perfusion=0.50, vessel=0.30,
+                   vessel_mm=26.0, vessel_col=(0.090, 0.022, 0.038), hue_shift=0.008),
+    # Myocardium red-pink; coronary vessels are the prominent feature.
+    "heart": dict(base=(0.42, 0.130, 0.110), perfusion=0.50, vessel=0.65,
+                  vessel_mm=26.0, vessel_col=(0.110, 0.025, 0.045), hue_shift=0.015),
+    # Pale tan-pink serosa, smooth and glossy, sparse vessels.
+    "stomach": dict(base=(0.55, 0.38, 0.31), perfusion=0.45, vessel=0.22,
+                    vessel_mm=22.0, vessel_col=(0.22, 0.075, 0.070), hue_shift=0.012),
+    # Pink with DENSE fine vessels — the defining feature of small-bowel serosa.
+    # Tuned by sweep: at vessel_mm 11 with a light vessel_col the tracery washed out
+    # entirely. 7 mm spacing and a much darker vessel colour is what makes it read.
+    "bowel": dict(base=(0.58, 0.32, 0.28), perfusion=0.45, vessel=0.95,
+                  vessel_mm=7.0, vessel_col=(0.16, 0.020, 0.022), hue_shift=0.012),
+    # "bowel" does not substring-match "duodenum", so it needs its own entry —
+    # without it the duodenum silently kept the un-tuned table values and rendered
+    # cream while the rest of the small bowel rendered pink.
+    "duodenum": dict(base=(0.58, 0.32, 0.28), perfusion=0.45, vessel=0.95,
+                     vessel_mm=7.0, vessel_col=(0.16, 0.020, 0.022), hue_shift=0.012),
+    "colon": dict(base=(0.50, 0.26, 0.25), perfusion=0.48, vessel=0.70,
+                  vessel_mm=10.0, vessel_col=(0.17, 0.030, 0.040), hue_shift=0.014),
+    # Tan-yellow and coarsely lobulated.
+    "pancreas": dict(base=(0.52, 0.38, 0.24), perfusion=0.50, vessel=0.18,
+                     vessel_mm=18.0, vessel_col=(0.24, 0.130, 0.060), hue_shift=0.012),
+    # Bile green, but muted. The green-dominant SSS radius (bilirubin/biliverdin) at
+    # sss 0.95 scatters green straight back out and reads as lime, so the weight and
+    # the radius asymmetry both have to come down, not just the base colour.
+    "gallbladder": dict(base=(0.065, 0.090, 0.058), perfusion=0.40, vessel=0.16,
+                        vessel_mm=16.0, vessel_col=(0.040, 0.060, 0.030),
+                        hue_shift=0.010, sss=0.55, sss_rgb=(0.70, 1.00, 0.78)),
+    "esophagus": dict(base=(0.44, 0.28, 0.25), perfusion=0.40, vessel=0.20,
+                      vessel_mm=20.0, vessel_col=(0.19, 0.070, 0.065), hue_shift=0.012),
+    "urinary_bladder": dict(base=(0.34, 0.25, 0.24), perfusion=0.40, vessel=0.20,
+                            vessel_mm=20.0, vessel_col=(0.17, 0.090, 0.100), hue_shift=0.010),
+    # Muted brick rather than fire-engine red. See AORTA_REALISTIC — the true
+    # adventitial surface is pale tan; this is a compromise with the colour coding.
+    "aorta": dict(base=(0.42, 0.16, 0.13), perfusion=0.30, vessel=0.14,
+                  vessel_mm=16.0, vessel_col=(0.20, 0.060, 0.055), hue_shift=0.008),
+    "vena_cava": dict(base=(0.20, 0.11, 0.22), perfusion=0.30, vessel=0.12,
+                      vessel_mm=16.0, vessel_col=(0.090, 0.045, 0.110), hue_shift=0.008),
+    "portal": dict(base=(0.20, 0.11, 0.22), perfusion=0.30, vessel=0.12,
+                   vessel_mm=16.0, vessel_col=(0.090, 0.045, 0.110), hue_shift=0.008),
+    # Off-white with a yellow cast, never neutral chalk.
+    "vertebrae": dict(base=(0.62, 0.56, 0.46), perfusion=0.25, vessel=0.0,
+                      hue_shift=0.006),
+    # Dark red striated skeletal muscle.
+    "autochthon": dict(base=(0.30, 0.075, 0.060), perfusion=0.50, vessel=0.22,
+                       vessel_mm=24.0, vessel_col=(0.12, 0.030, 0.030), hue_shift=0.014),
+}
+
+
+def apply_reference_look():
+    """Overlay REFERENCE_LOOK onto TISSUES by longest-matching key."""
+    for t in TISSUES:
+        key = None
+        for k in REFERENCE_LOOK:
+            if k in t["name"] and (key is None or len(k) > len(key)):
+                key = k
+        if key is None:
+            print(f"  [warn] no REFERENCE_LOOK entry matches '{t['name']}' — "
+                  f"it will render with un-tuned table values")
+            continue
+        for field, val in REFERENCE_LOOK[key].items():
+            t[field] = list(val) if isinstance(val, tuple) and field == "base" else val
+
+
+apply_reference_look()
+
+
 TEX_DIR = Path("data/renders/textures")
 
 
@@ -764,7 +864,14 @@ def build_perfusion(nodes, links, vec_out, t, color_out):
     sep = nodes.new('ShaderNodeSeparateColor')
     links.new(mix_oct.outputs[2], sep.inputs['Color'])
 
-    val = _map_range(nodes, links, sep.outputs['Red'], 1.0 - amp, 1.0 + amp)
+    # Map from the noise's ACTUAL spread, not from 0..1. Blender's Noise `Fac` is
+    # roughly gaussian about 0.5 and almost never reaches the extremes, so remapping
+    # 0..1 -> the output range leaves nearly every pixel bunched in the middle and the
+    # amplitude parameter does almost nothing. Measured on liver: raising `perfusion`
+    # from 0.34 to 0.80 moved the output std only 0.044 -> 0.050.
+    # Remapping from 0.35..0.65 lets the distribution fill the range.
+    val = _map_range(nodes, links, sep.outputs['Red'], 1.0 - amp, 1.0 + amp,
+                     from_min=0.35, from_max=0.65)
     out = _mix_rgb(nodes, links, 'MULTIPLY', 1.0,
                    a_out=color_out,
                    b_out=_gray(nodes, links, val.outputs['Result']).outputs['Color'])
@@ -772,7 +879,8 @@ def build_perfusion(nodes, links, vec_out, t, color_out):
     # Hue drift. 0.5 is neutral on the Hue/Saturation node.
     hs = t["hue_shift"]
     if hs > 0:
-        hue = _map_range(nodes, links, n_lo.outputs['Fac'], 0.5 - hs, 0.5 + hs)
+        hue = _map_range(nodes, links, n_lo.outputs['Fac'], 0.5 - hs, 0.5 + hs,
+                         from_min=0.35, from_max=0.65)
         hsv = nodes.new('ShaderNodeHueSaturation')
         links.new(hue.outputs['Result'], hsv.inputs['Hue'])
         links.new(out.outputs[2], hsv.inputs['Color'])
