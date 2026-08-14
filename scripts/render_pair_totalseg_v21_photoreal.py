@@ -149,6 +149,11 @@ def get_args():
     ap.add_argument("--angles", type=int, default=3)
     ap.add_argument("--device", default="CPU", choices=["CPU", "GPU"])
     ap.add_argument("--tag",    default="v21", help="output filename tag")
+    ap.add_argument("--gt_only", action="store_true",
+                    help="skip the EEVEE simple/seg pass and render only the Cycles GT. "
+                         "Required on headless servers with no /dev/dri access, where "
+                         "EEVEE cannot create a GL context (libEGL EGL_BAD_MATCH). The "
+                         "simple pass is unchanged from v20, so nothing is lost here.")
 
     # ── Photorealism layers — disable individually to bisect ──
     ap.add_argument("--no-sss-fix",  dest="sss_fix",  action="store_false",
@@ -825,10 +830,56 @@ def reset_scene():
         bpy.data.collections.remove(col)
 
 
+def configure_gpu(device):
+    """Enable a Cycles compute backend explicitly.
+
+    scene.cycles.device = 'GPU' only expresses intent — if no compute device is ticked
+    in preferences, Cycles falls back to CPU without saying so. v20 never set this, so
+    it is worth checking whether your dataset generation was actually GPU-bound.
+
+    OptiX is preferred over CUDA on the L4s: RT-core traversal plus a much better
+    denoiser than the CPU OIDN path.
+    """
+    if device != 'GPU':
+        return
+    try:
+        prefs = bpy.context.preferences.addons['cycles'].preferences
+        chosen = None
+        for backend in ('OPTIX', 'CUDA', 'HIP', 'ONEAPI', 'METAL'):
+            try:
+                prefs.compute_device_type = backend
+            except Exception:
+                continue
+            for refresh in ('refresh_devices', 'get_devices'):
+                try:
+                    getattr(prefs, refresh)()
+                    break
+                except Exception:
+                    continue
+            if any(getattr(d, 'type', None) == backend for d in prefs.devices):
+                chosen = backend
+                break
+
+        if chosen is None:
+            print("  [warn] no GPU backend found — Cycles will render on CPU")
+            return
+
+        enabled = 0
+        for d in prefs.devices:
+            d.use = (getattr(d, 'type', None) == chosen)
+            if d.use:
+                enabled += 1
+                print(f"  GPU: {d.name} [{d.type}]")
+        print(f"  Cycles compute: {chosen} — {enabled} device(s)")
+    except Exception as e:
+        print(f"  [warn] GPU configuration failed ({e}); leaving Blender's default")
+
+
 def setup_render(args, feat):
     scene = bpy.context.scene
     scene.render.engine = 'CYCLES'
     scene.cycles.samples = args.spp
+    configure_gpu(args.device)
     scene.cycles.device  = args.device
     scene.render.film_transparent = False
 
@@ -1317,10 +1368,16 @@ def main():
         print(f"\n--- Angle {label} ---")
         point_camera(cam_obj, cam_pos_at_angle(theta), (cx, cy, cz))
 
-        simple_path = out_dir / f"simple_{args.tag}_{label}.png"
-        render_simple(objs_with_mats, cam_obj, simple_path, feat)
-        restore_gt_materials(objs_with_mats)
-        print(f"  Simple → {simple_path.name}")
+        # The EEVEE simple/seg pass needs a GL context, which headless servers without
+        # /dev/dri access cannot provide (libEGL "Permission denied" → EGL_BAD_MATCH).
+        # Its output is identical to v20 anyway — same hex palette, same flat diffuse —
+        # so --gt_only skips it and goes straight to Cycles, which is CPU/CUDA only.
+        simple_path = None
+        if not args.gt_only:
+            simple_path = out_dir / f"simple_{args.tag}_{label}.png"
+            render_simple(objs_with_mats, cam_obj, simple_path, feat)
+            restore_gt_materials(objs_with_mats)
+            print(f"  Simple → {simple_path.name}")
 
         gt_path = out_dir / f"gt_{args.tag}_spp{args.spp}_{label}.png"
         bpy.context.scene.render.filepath = str(gt_path)
@@ -1332,16 +1389,32 @@ def main():
     print("\n[3/3] Assembling grid ...")
     gap, label_h = 15, 40
     sz = args.size
-    n  = len(angle_rows)
-    grid = np.zeros(((sz + label_h) * n + gap, sz*2 + gap, 3), dtype=np.uint8)
+
+    # When --gt_only skipped the EEVEE pass, fall back to the v20 simple render for the
+    # left column if one is already on disk — it is the same image either way.
+    resolved = []
+    for sp, gp, lbl in angle_rows:
+        if sp is None:
+            for cand in (out_dir / f"simple_v20_{lbl}.png",
+                         out_dir / f"simple_v21_{lbl}.png"):
+                if cand.exists():
+                    sp = cand
+                    break
+        resolved.append((sp, gp, lbl))
+
+    two_col = any(sp is not None and sp.exists() for sp, _, _ in resolved)
+    width   = (sz*2 + gap) if two_col else sz
+    n       = len(resolved)
+    grid = np.zeros(((sz + label_h) * n + gap, width, 3), dtype=np.uint8)
     grid[:] = 10
 
-    for i, (sp, gp, _lbl) in enumerate(angle_rows):
+    for i, (sp, gp, _lbl) in enumerate(resolved):
         y0 = i * (sz + label_h) + gap
-        if sp.exists():
-            grid[y0+label_h : y0+label_h+sz, 0:sz]            = load_png_as_numpy(sp)[:sz, :sz]
+        gt_x0 = (sz + gap) if two_col else 0
+        if two_col and sp is not None and sp.exists():
+            grid[y0+label_h : y0+label_h+sz, 0:sz] = load_png_as_numpy(sp)[:sz, :sz]
         if gp.exists():
-            grid[y0+label_h : y0+label_h+sz, sz+gap:sz*2+gap] = load_png_as_numpy(gp)[:sz, :sz]
+            grid[y0+label_h : y0+label_h+sz, gt_x0:gt_x0+sz] = load_png_as_numpy(gp)[:sz, :sz]
 
     grid_path = pair_out / f"{args.subject}_{args.tag}_photoreal_spp{args.spp}.png"
     save_numpy_as_png(grid, grid_path)
