@@ -1,0 +1,38 @@
+DATASET: 1175 subjects | 29 tissues | 23500 views
+tissues/subject: min=1 max=29 mean=20.98
+
+TISSUE PRESENCE (sorted, rarest first):
+  urinary_bladder                      568 subj ( 48.3%)
+  vertebrae_L5                         612 subj ( 52.1%)
+  gallbladder                          623 subj ( 53.0%)
+  vertebrae_L4                         630 subj ( 53.6%)
+  vertebrae_L3                         632 subj ( 53.8%)
+  vertebrae_L2                         705 subj ( 60.0%)
+  duodenum                             754 subj ( 64.2%)
+  superior_vena_cava                   762 subj ( 64.9%)
+  kidney_right                         768 subj ( 65.4%)
+  vertebrae_L1                         787 subj ( 67.0%)
+  kidney_left                          792 subj ( 67.4%)
+  pancreas                             793 subj ( 67.5%)
+  small_bowel                          803 subj ( 68.3%)
+  portal_vein_and_splenic_vein         813 subj ( 69.2%)
+  lung_upper_lobe_right                855 subj ( 72.8%)
+  vertebrae_T12                        864 subj ( 73.5%)
+  spleen                               881 subj ( 75.0%)
+  stomach                              899 subj ( 76.5%)
+  colon                                903 subj ( 76.9%)
+  heart                                916 subj ( 78.0%)
+  liver                                934 subj ( 79.5%)
+  inferior_vena_cava                   972 subj ( 82.7%)
+  lung_lower_lobe_right                981 subj ( 83.5%)
+  lung_lower_lobe_left                 998 subj ( 84.9%)
+  lung_upper_lobe_left                1021 subj ( 86.9%)
+  esophagus                           1031 subj ( 87.7%)
+  aorta                               1101 subj ( 93.7%)
+  autochthon_left                     1124 subj ( 95.7%)
+  autochthon_right                    1126 subj ( 95.8%)
+
+SPLIT CANDIDATE COMPARISON (lower missing / deviation = better):
+  candidate     train   val  test  miss_val  miss_test  mean_dev  max_dev
+  random          988    91    96         0          0   0.00684  0.01436
+  stratified      996    90    89         0          0   0.00064  0.00374
