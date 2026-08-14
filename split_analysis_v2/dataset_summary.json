@@ -1,0 +1,12 @@
+{
+  "n_subjects": 1175,
+  "n_tissues": 29,
+  "n_views_total": 23500,
+  "tissues_per_subject": {
+    "min": 1,
+    "max": 29,
+    "mean": 20.98
+  },
+  "rare_tissues_lt5pct": [],
+  "coverage_measured": false
+}

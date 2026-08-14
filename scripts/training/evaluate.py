@@ -151,15 +151,39 @@ def eval_single(args, cfg, device):
     out_dir = Path(args.out) if args.out else Path(cfg.train.output_dir) / "eval"
     (out_dir / "grids").mkdir(parents=True, exist_ok=True)
 
+    # Choose which views to save as seg|fake|GT grids:
+    #   --grid-subjects "s0809,s0445" → ALL views of those subjects (multi-view showcase)
+    #   otherwise                     → --grids N views spread EVENLY across the split
+    #                                   (variety of subjects, not just the first one)
+    if args.grid_subjects:
+        keep = {s.strip() for s in args.grid_subjects.split(",") if s.strip()}
+        grid_rows = [r for r in rows if r["subject"] in keep]
+    else:
+        idxs = np.unique(np.linspace(0, len(rows) - 1, min(args.grids, len(rows))).astype(int))
+        grid_rows = [rows[i] for i in idxs]
+
+    tiles = []
     with torch.no_grad():
-        for r in rows[:16]:
+        for r in grid_rows:
             b = ds[r["idx"]]
             fake = G(b["input"].unsqueeze(0).to(device))
             grid = np.concatenate([np.clip(to01(b["input"][:3]), 0, 1),
                                    np.clip(to01(fake[0]), 0, 1),
                                    np.clip(to01(b["target"]), 0, 1)], axis=1)  # seg|fake|GT
+            g8 = (grid * 255).astype(np.uint8)
             cv2.imwrite(str(out_dir / "grids" / f"{b['subject']}_{b['view']}.png"),
-                        cv2.cvtColor((grid * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+                        cv2.cvtColor(g8, cv2.COLOR_RGB2BGR))
+            th = 240  # downscale for the montage
+            tiles.append(cv2.resize(g8, (int(g8.shape[1] * th / g8.shape[0]), th)))
+
+    # One montage image (seg|fake|GT stacked) — the "send to prof" artifact.
+    if tiles:
+        w = max(t.shape[1] for t in tiles)
+        tiles = [np.pad(t, ((0, 0), (0, w - t.shape[1]), (0, 0)), constant_values=20) for t in tiles]
+        montage = np.concatenate(tiles, axis=0)
+        cv2.imwrite(str(out_dir / "montage.png"), cv2.cvtColor(montage, cv2.COLOR_RGB2BGR))
+        print(f"[eval] {len(tiles)} grids + montage → {out_dir/'montage.png'} "
+              f"(left=seg input · middle=neural render · right=Cycles GT)")
 
     if args.worst > 0:
         worst = sorted(rows, key=lambda r: r["lpips"], reverse=True)[:args.worst]
@@ -202,6 +226,10 @@ def main():
     ap.add_argument("--split", default="test")
     ap.add_argument("--max-samples", type=int, default=0, help="0 = all")
     ap.add_argument("--worst", type=int, default=0, help="dump K worst-LPIPS seg|fake|GT grids")
+    ap.add_argument("--grids", type=int, default=16,
+                    help="how many seg|fake|GT grids to save, spread evenly across subjects")
+    ap.add_argument("--grid-subjects", default=None,
+                    help="comma list of subjects → save ALL their views as grids (multi-view showcase)")
     # track mode
     ap.add_argument("--track", action="store_true",
                     help="evaluate ALL checkpoints in --run-dir on train+val and print the curve")
