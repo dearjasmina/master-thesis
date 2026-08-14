@@ -354,11 +354,11 @@ def get_args():
                     help="re-enable the 8-bit UV bump maps from v7-v22. They are the "
                          "source of the contour banding — see the docstring. Off by "
                          "default; the object-space procedural relief replaces them.")
-    ap.add_argument("--frame",      type=float, default=0.62,
-                    help="camera distance as a multiple of the organ bounding box. "
-                         "Lower = tighter crop. 0.62 fills the frame; 0.8 pulls back. "
-                         "v23 and earlier framed off the CT field of view instead, so "
-                         "zoom varied wildly between subjects.")
+    ap.add_argument("--frame",      type=float, default=0.85,
+                    help="fraction of the frame the organs should fill, 0-1. "
+                         "0.85 leaves a small margin; 1.0 is edge-to-edge; 0.6 pulls "
+                         "back. v23 and earlier framed off the CT field of view, so "
+                         "zoom varied wildly between subjects with identical anatomy.")
     ap.add_argument("--smooth",     type=int,   default=20,
                     help="Laplacian smoothing iterations to kill the 1.5 mm "
                          "marching-cubes staircase. 0 disables (= v22 behaviour).")
@@ -1845,7 +1845,21 @@ def main():
     ctr = (lo + hi) * 0.5
     cx, cy, cz = ctr.x, ctr.y, ctr.z
     extent      = max(hi[i] - lo[i] for i in range(3))
-    radius      = extent * args.frame
+
+    # Solve for the camera radius that makes the organs fill `--frame` of the frame.
+    # cam_pos_at_angle() sits at (0.6r, 1.15r, 0.45r) from centre, so the camera
+    # distance is |(0.6, 1.15, 0.45)| * r, and the frame covers 2*d*tan(fov/2) metres.
+    #   frame_m = 2 * K * r * tan(fov/2)   with K = |(0.6, 1.15, 0.45)| = 1.3739
+    # Wanting frame_m = extent / fill gives r = extent / (fill * 2 * K * tan(fov/2)).
+    #
+    # The first cut of this multiplied extent by --frame directly, which made the
+    # radius SMALLER than the subject: at frame 0.62 a 56 cm torso was shot with a
+    # 15 cm frame. --frame is now the fraction of the frame the organs occupy, which
+    # is what the name implies and is bounded in (0, 1].
+    _K   = math.sqrt(0.6**2 + 1.15**2 + 0.45**2)
+    _fov = math.radians(18.0)
+    fill = min(max(args.frame, 0.05), 1.0)
+    radius      = extent / (fill * 2.0 * _K * math.tan(_fov / 2.0))
     scene_scale = extent
     print(f"  organ bbox : {extent*100:.1f} cm across, centre "
           f"({cx:.3f}, {cy:.3f}, {cz:.3f}) m")
