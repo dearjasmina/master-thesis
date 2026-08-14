@@ -686,8 +686,12 @@ TISSUES = [
 REFERENCE_LOOK = {
     # Salmon-pink, strong irregular mottling, fine dark vessel tracery.
     # Was pure white plastic — the single worst offender in the v23 scene render.
-    "lung": dict(base=(0.460, 0.240, 0.232), perfusion=0.60, vessel=0.70,
-                 vessel_mm=16.0, vessel_col=(0.10, 0.020, 0.030), hue_shift=0.015),
+    # Lung tracery must stay near-subliminal. At vessel 0.70 the single noise-contour
+    # field reads as drawn-on squiggles rather than vasculature — there is only one
+    # structural model here, so pushing its amplitude makes it look MORE procedural,
+    # not more detailed. Low coverage, low contrast, broad territories.
+    "lung": dict(base=(0.460, 0.240, 0.232), perfusion=0.60, vessel=0.22,
+                 vessel_mm=30.0, vessel_col=(0.30, 0.135, 0.135), hue_shift=0.015),
     # Deep burgundy-brown, glossy capsule, large tonal zones, vessels subtle —
     # in the references the liver reads smooth and dark, not heavily veined.
     # Tuned by sweep: 0.26 red read as orange, and hue_shift 0.018 pushed patches into
