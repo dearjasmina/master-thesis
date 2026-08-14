@@ -1,5 +1,5 @@
 """
-render_pair_totalseg_v24_photoreal.py — framing, palette and lighting pass over v23
+render_pair_totalseg_v25_textured.py — framing, palette and lighting pass over v23
 
 v23 got the geometry and the procedural machinery right. v24 addresses what was still
 wrong when the whole scene was viewed together.
@@ -264,7 +264,7 @@ WHAT v21 GOT WRONG  (all four verified against the render, not guessed)
    albedos pulled down — SSS supplies the brightness that the albedo used to fake.
 
 Run:
-    blender --background --python scripts/render_pair_totalseg_v24_photoreal.py -- \\
+    blender --background --python scripts/render_pair_totalseg_v25_textured.py -- \\
         --subject s0050 --spp 384 --size 1024 --angles 1 --device GPU
 
 Bisect a single change:
@@ -354,6 +354,11 @@ def get_args():
                     help="re-enable the 8-bit UV bump maps from v7-v22. They are the "
                          "source of the contour banding — see the docstring. Off by "
                          "default; the object-space procedural relief replaces them.")
+    ap.add_argument("--walls", action="store_true",
+                    help="add the dark negative-fill side planes. These were a v20 "
+                         "device for a much closer camera; with v24's framing they sit "
+                         "in shot and light up as a brown backdrop, and the environment "
+                         "now supplies the wraparound they used to shape. Off by default.")
     ap.add_argument("--frame",      type=float, default=0.85,
                     help="fraction of the frame the organs should fill, 0-1. "
                          "0.85 leaves a small margin; 1.0 is edge-to-edge; 0.6 pulls "
@@ -366,7 +371,11 @@ def get_args():
                     help="lambda per iteration; Bade et al. use 0.5 for liver")
     ap.add_argument("--tex_dir",    default="data/renders/textures/tissue",
                     help="box-projected {tissue}_albedo/_normal/_rough maps")
-    ap.add_argument("--tex_mm",     type=float, default=120.0,
+    ap.add_argument("--tex_tint",   type=float, default=0.0,
+                    help="0 = use the synthesised albedo as-is (it already carries the "
+                         "organ palette); 1 = ignore it and use the table colour. "
+                         "Values between blend the two.")
+    ap.add_argument("--tex_mm",     type=float, default=80.0,
                     help="real-world tile size of those maps, in millimetres")
     ap.add_argument("--sss_scale",  type=float, default=0.90,
                     help="global gain on Subsurface Scale. v23's 0.55 suppressed the "
@@ -690,13 +699,13 @@ REFERENCE_LOOK = {
     # field reads as drawn-on squiggles rather than vasculature — there is only one
     # structural model here, so pushing its amplitude makes it look MORE procedural,
     # not more detailed. Low coverage, low contrast, broad territories.
-    "lung": dict(base=(0.460, 0.240, 0.232), perfusion=0.60, vessel=0.22,
+    "lung": dict(sss=0.30, sheen=0.22, rough=0.62, base=(0.460, 0.240, 0.232), perfusion=0.60, vessel=0.22,
                  vessel_mm=30.0, vessel_col=(0.30, 0.135, 0.135), hue_shift=0.015),
     # Deep burgundy-brown, glossy capsule, large tonal zones, vessels subtle —
     # in the references the liver reads smooth and dark, not heavily veined.
     # Tuned by sweep: 0.26 red read as orange, and hue_shift 0.018 pushed patches into
     # visible yellow-green. Deeper and browner, with the hue drift almost off.
-    "liver": dict(base=(0.145, 0.032, 0.028), perfusion=0.60, vessel=0.30,
+    "liver": dict(sss=0.95, sheen=0.02, rough=0.22, base=(0.145, 0.032, 0.028), perfusion=0.60, vessel=0.30,
                   vessel_mm=34.0, vessel_col=(0.070, 0.014, 0.026), hue_shift=0.005),
     "spleen": dict(base=(0.135, 0.030, 0.050), perfusion=0.55, vessel=0.26,
                    vessel_mm=30.0, vessel_col=(0.065, 0.013, 0.042), hue_shift=0.007),
@@ -721,7 +730,7 @@ REFERENCE_LOOK = {
     "colon": dict(base=(0.440, 0.258, 0.248), perfusion=0.48, vessel=0.34,
                   vessel_mm=13.0, vessel_col=(0.17, 0.030, 0.040), hue_shift=0.014),
     # Tan-yellow and coarsely lobulated.
-    "pancreas": dict(base=(0.480, 0.355, 0.238), perfusion=0.50, vessel=0.18,
+    "pancreas": dict(sss=0.40, sheen=0.14, rough=0.58, base=(0.480, 0.355, 0.238), perfusion=0.50, vessel=0.18,
                      vessel_mm=18.0, vessel_col=(0.24, 0.130, 0.060), hue_shift=0.012),
     # Bile green, but muted. The green-dominant SSS radius (bilirubin/biliverdin) at
     # sss 0.95 scatters green straight back out and reads as lime, so the weight and
@@ -742,10 +751,10 @@ REFERENCE_LOOK = {
     "portal": dict(base=(0.20, 0.11, 0.22), perfusion=0.30, vessel=0.12,
                    vessel_mm=16.0, vessel_col=(0.090, 0.045, 0.110), hue_shift=0.008),
     # Off-white with a yellow cast, never neutral chalk.
-    "vertebrae": dict(base=(0.62, 0.56, 0.46), perfusion=0.25, vessel=0.0,
+    "vertebrae": dict(sss=0.10, sheen=0.05, rough=0.74, base=(0.62, 0.56, 0.46), perfusion=0.25, vessel=0.0,
                       hue_shift=0.006),
     # Dark red striated skeletal muscle.
-    "autochthon": dict(base=(0.30, 0.075, 0.060), perfusion=0.50, vessel=0.22,
+    "autochthon": dict(sss=0.35, sheen=0.26, rough=0.66, base=(0.30, 0.075, 0.060), perfusion=0.50, vessel=0.22,
                        vessel_mm=24.0, vessel_col=(0.12, 0.030, 0.030), hue_shift=0.014),
 }
 
@@ -1088,14 +1097,32 @@ def _box_tex(nodes, links, obj_vec, path, tex_mm, non_color):
 
 
 def tissue_textures(tissue_name, tex_dir):
-    """Return whichever of albedo/normal/rough exist for this tissue."""
+    """Find albedo/normal/rough for a tissue, falling back to its class.
+
+    Exact name wins, then the longest REFERENCE_LOOK key contained in the name — so a
+    single `lung_*` set serves all four lobes and `vena_cava_*` serves both cavae,
+    instead of needing 29 near-identical texture sets on disk.
+    """
     d = Path(tex_dir)
+    names = [tissue_name]
+    cls = None
+    for k in REFERENCE_LOOK:
+        if k in tissue_name and (cls is None or len(k) > len(cls)):
+            cls = k
+    if cls and cls != tissue_name:
+        names.append(cls)
+
     found = {}
     for kind in ("albedo", "normal", "rough"):
-        for ext in (".png", ".jpg", ".exr"):
-            cand = d / f"{tissue_name}_{kind}{ext}"
-            if cand.exists():
-                found[kind] = cand
+        for nm in names:
+            hit = None
+            for ext in (".png", ".jpg", ".exr"):
+                cand = d / f"{nm}_{kind}{ext}"
+                if cand.exists():
+                    hit = cand
+                    break
+            if hit:
+                found[kind] = hit
                 break
     return found
 
@@ -1135,21 +1162,31 @@ def make_material(t, feat):
     links.new(color_out, hsv.inputs['Color'])
     color_out = hsv.outputs['Color']
 
-    # Photographic albedo, if supplied, replaces the flat base colour. It is tinted by
-    # the table colour rather than used raw, so one generic tissue map can serve several
-    # organs and the palette still separates them.
+    # Synthesised albedo REPLACES the flat base colour rather than multiplying into it.
+    # v24 mixed MULTIPLY at fac 0.85, i.e. result = A*0.15 + A*B*0.85 with A = texture:
+    # texture-dominant and washed, and the palette barely survived. The maps from
+    # synth_tissue_textures.py are already generated in each organ's palette, so they
+    # are the base colour. --tex_tint blends back toward the table colour if a subject
+    # needs nudging.
     tex = tissue_textures(t["name"], feat["tex_dir"])
-    if "albedo" in tex:
+    has_albedo = "albedo" in tex
+    if has_albedo:
         ta = _box_tex(nodes, links, obj_vec, tex["albedo"], feat["tex_mm"], False)
-        col2 = _mix_rgb(nodes, links, 'MULTIPLY', 0.85,
-                        a_out=ta.outputs['Color'], b_out=color_out)
-        color_out = col2.outputs[2]
+        if feat["tex_tint"] > 0.0:
+            blend = _mix_rgb(nodes, links, 'MIX', feat["tex_tint"],
+                             a_out=ta.outputs['Color'], b_out=color_out)
+            color_out = blend.outputs[2]
+        else:
+            color_out = ta.outputs['Color']
 
-    if feat["perfusion"] and t["perfusion"] > 0:
+    # The texture already contains the vasculature and the blood-content variation, so
+    # running the procedural layers on top would double them — two unrelated vessel
+    # networks superimposed, which reads worse than either alone.
+    if feat["perfusion"] and t["perfusion"] > 0 and not has_albedo:
         color_out = build_perfusion(nodes, links, obj_vec, t, color_out)
 
     vessel_height = None
-    if feat["vessels"] and t["vessel"] > 0:
+    if feat["vessels"] and t["vessel"] > 0 and not has_albedo:
         color_out, vessel_height = build_vessels(
             nodes, links, obj_vec, t, color_out, feat["vessel_gain"])
 
@@ -1210,7 +1247,7 @@ def make_material(t, feat):
     normal_out = bevel.outputs['Normal']
     coat_normal_out = None
 
-    if feat["micro"]:
+    if feat["micro"] and "normal" not in tex:
         normal_out, coat_normal_out = build_micro_normals(
             nodes, links, obj_vec, t, normal_out, feat["detail"])
 
@@ -1559,7 +1596,14 @@ def setup_lights(cx, cy, cz, scene_scale, feat, key_energy=90.0):
     subsurface one.
     """
     sc = scene_scale
-    _e = (scene_scale / 0.40) ** 2      # size-invariant exposure
+    # Normalisation point matters as much as the scaling law. Irradiance goes as
+    # P/d^2 and d scales with scene_scale, so P ~ scene_scale^2 keeps exposure constant
+    # — but the CONSTANT was calibrated against 0.40 m while v20's flat 90 W was
+    # implicitly calibrated against the CT extent (~0.8 m). Since v24 switched
+    # scene_scale to the smaller organ extent, the lights moved closer AND got scaled
+    # up, compounding to roughly 4x too bright: the scene measured mean RGB 212/255
+    # where it should sit near 130. 0.78 m restores v20's light level.
+    _e = (scene_scale / 0.78) ** 2      # size-invariant exposure
 
     bpy.ops.object.light_add(type='AREA',
         location=(cx + sc*1.4, cy + sc*0.3, cz + sc*0.8))
@@ -1782,6 +1826,7 @@ def main():
         sss_method    = args.sss_method,
         training_safe = args.training_safe,
         legacy_bump   = args.legacy_bump,
+        tex_tint      = args.tex_tint,
         tex_dir       = args.tex_dir,
         tex_mm        = args.tex_mm,
     )
@@ -1902,7 +1947,8 @@ def main():
 
     cam_obj = setup_camera(args.fstop)
     setup_lights(cx, cy, cz, scene_scale, feat, args.key_energy)
-    add_fill_planes(cx, cy, cz, scene_scale, feat, cam_radius=radius)
+    if args.walls:
+        add_fill_planes(cx, cy, cz, scene_scale, feat, cam_radius=radius)
     setup_compositor(bpy.context.scene, feat)
 
     # Materials last — they depend on MM_PER_PX.
