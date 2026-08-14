@@ -346,10 +346,32 @@ def get_args():
 def _mm_scale(wavelength_mm):
     """Noise/Voronoi Scale that yields features of `wavelength_mm` millimetres.
 
-    Object-space coordinates are in metres (OBJ is mm, imported at global_scale=0.001),
-    so a texture Scale of s gives features of 1/s metres = 1000/s mm.
+    OBJECT SPACE IS MILLIMETRES, NOT METRES. This was wrong in v21/v22 and in every
+    earlier version, and it is why no procedural detail has ever been visible.
+
+    bpy.ops.wm.obj_import(global_scale=0.001) does NOT bake the scale into the vertex
+    data — it sets the object's SCALE TRANSFORM to 0.001 and leaves local coordinates
+    at their original millimetre values. Verified on s0050 liver:
+
+        object.scale        = (0.001, 0.001, 0.001)
+        local vertex coords = 155..340        <- millimetres
+        world coords        = 0.155..0.340    <- metres
+
+    ShaderNodeTexCoord's 'Object' output is LOCAL space, so it delivers millimetres.
+    A texture Scale of s therefore gives features of 1/s MILLIMETRES:
+
+        scale = 1 / wavelength_mm
+
+    v21/v22 used 1000/wavelength_mm, i.e. every feature rendered at one millionth of
+    the requested size — 28 mm lobulation came out at 0.028 mm, far below one pixel, so
+    it averaged to flat grey. Rendering the raw Voronoi as emission shows uniform
+    per-pixel noise instead of cells, which is what confirmed this.
+
+    It also explains v16-v20: scales of 1.5-85 on millimetre coordinates are 0.67 mm
+    down to 0.012 mm features. v19's conclusion that procedural noise "added variance,
+    not signal" was literally correct — it was all sub-pixel.
     """
-    return 1000.0 / float(wavelength_mm)
+    return 1.0 / float(wavelength_mm)
 
 
 def _safe_detail(wavelength_mm, mm_per_px, requested=4.0):
@@ -773,6 +795,27 @@ def build_vessels(nodes, links, vec_out, t, color_out, gain):
     name    = t["name"]
     vis     = min(1.0, t["vessel"] * gain)
     vcol    = t["vessel_col"]
+
+    # Warp the sampling coordinates with a low-frequency noise before evaluating the
+    # Voronoi. Undistorted Voronoi edges form a regular honeycomb, which is the giveaway
+    # that a vascular pattern is procedural — real arcades are irregular, and branch with
+    # varying calibre. Warping at ~2.5x the cell size bends the tessellation into
+    # something that reads as anatomy rather than as a Voronoi diagram.
+    warp_n = _noise(nodes, links, vec_out, t["vessel_mm"] * 2.5, _phase(name, 11),
+                    detail=2.0)
+    warp_off = nodes.new('ShaderNodeVectorMath')
+    warp_off.operation = 'SUBTRACT'
+    _set(warp_off, 1, (0.5, 0.5, 0.5))
+    _link_to(links, warp_n.outputs['Color'], warp_off, 0)
+    warp_amp = nodes.new('ShaderNodeVectorMath')
+    warp_amp.operation = 'SCALE'
+    _set(warp_amp, 'Scale', t["vessel_mm"] * 0.55)   # object space is mm
+    links.new(warp_off.outputs['Vector'], warp_amp.inputs[0])
+    warped = nodes.new('ShaderNodeVectorMath')
+    warped.operation = 'ADD'
+    links.new(vec_out, warped.inputs[0])
+    links.new(warp_amp.outputs['Vector'], warped.inputs[1])
+    vec_out = warped.outputs['Vector']
 
     # Primary arcade.
     v1 = _voronoi_edges(nodes, links, vec_out, t["vessel_mm"], _phase(name, 3))
