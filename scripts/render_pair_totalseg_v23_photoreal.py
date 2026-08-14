@@ -423,7 +423,7 @@ _DEFAULTS = dict(
     bump_type="none", bump_scale=0.0,
     micro=1.0, macro_mm=25.0, meso_mm=6.0, fine_mm=1.6,
     vessel=0.0, vessel_mm=14.0, vessel_col=(0.10, 0.020, 0.045),
-    perfusion=0.10, hue_shift=0.010,
+    perfusion=0.17, hue_shift=0.010,
 )
 
 
@@ -440,16 +440,16 @@ TISSUES = [
     # in reality; the UV texture approximates it.
     T("autochthon_left",  "#4A3E3D", (0.22, 0.065, 0.055), rough=0.52,
       sss=0.55, sss_mm=1.6, sss_rgb=(1.00, 0.70, 0.50), sss_aniso=0.85,
-      coat=0.06, coat_rough=0.22, sheen=0.06,
+      coat=0.16, coat_rough=0.16, sheen=0.06,
       bump_type="fibrous", bump_scale=0.15,
       micro=1.15, meso_mm=4.0, fine_mm=1.2,
-      vessel=0.30, vessel_mm=10.0, perfusion=0.14),
+      vessel=0.14, vessel_mm=24.0, perfusion=0.24),
     T("autochthon_right", "#4A3E3D", (0.22, 0.065, 0.055), rough=0.52,
       sss=0.55, sss_mm=1.6, sss_rgb=(1.00, 0.70, 0.50), sss_aniso=0.85,
-      coat=0.06, coat_rough=0.22, sheen=0.06,
+      coat=0.16, coat_rough=0.16, sheen=0.06,
       bump_type="fibrous", bump_scale=0.15,
       micro=1.15, meso_mm=4.0, fine_mm=1.2,
-      vessel=0.30, vessel_mm=10.0, perfusion=0.14),
+      vessel=0.14, vessel_mm=24.0, perfusion=0.24),
 
     # ── Lung ─────────────────────────────────────────────────────────────────
     # Air-filled, so short transport depth and high albedo. The vessel channel here
@@ -458,11 +458,11 @@ TISSUES = [
     # v20's uniform pink-grey is what a neonatal lung looks like.
     *[T(n, "#9C8585", (0.44, 0.315, 0.305), rough=0.44,
         sss=0.70, sss_mm=1.1, sss_rgb=(1.00, 0.80, 0.68), sss_aniso=0.70,
-        coat=0.14, coat_rough=0.14, sheen=0.05,
+        coat=0.34, coat_rough=0.090, sheen=0.05,
         bump_type="smooth", bump_scale=0.10,
         micro=0.85, macro_mm=30.0, meso_mm=7.0, fine_mm=2.0,
-        vessel=0.34, vessel_mm=11.0, vessel_col=(0.055, 0.050, 0.050),
-        perfusion=0.11, hue_shift=0.006)
+        vessel=0.10, vessel_mm=26.0, vessel_col=(0.055, 0.050, 0.050),
+        perfusion=0.19, hue_shift=0.006)
       for n in ("lung_lower_lobe_left", "lung_lower_lobe_right",
                 "lung_upper_lobe_left", "lung_upper_lobe_right")],
 
@@ -474,7 +474,7 @@ TISSUES = [
         sss=0.22, sss_mm=0.9, sss_rgb=(1.00, 0.90, 0.76), sss_aniso=0.55,
         coat=0.03, coat_rough=0.38, sheen=0.03,
         micro=0.70, macro_mm=18.0, meso_mm=5.0, fine_mm=1.4,
-        vessel=0.0, perfusion=0.07, hue_shift=0.004)
+        vessel=0.0, perfusion=0.12, hue_shift=0.004)
       for n in ("vertebrae_T12", "vertebrae_L1", "vertebrae_L2",
                 "vertebrae_L3", "vertebrae_L4", "vertebrae_L5")],
 
@@ -482,19 +482,19 @@ TISSUES = [
     # Epicardial fat streaks along the coronary grooves and a wet pericardial sheen.
     T("heart", "#8A2A2A", (0.34, 0.085, 0.070), rough=0.34,
       sss=0.88, sss_mm=2.2, sss_rgb=(1.00, 0.74, 0.53), sss_aniso=0.85,
-      coat=0.30, coat_rough=0.045, sheen=0.05,
+      coat=0.55, coat_rough=0.032, sheen=0.05,
       bump_type="lobular", bump_scale=0.35,
       micro=1.10, macro_mm=22.0, meso_mm=5.5, fine_mm=1.5,
-      vessel=0.42, vessel_mm=12.0, vessel_col=(0.12, 0.030, 0.055),
-      perfusion=0.16, hue_shift=0.014),
+      vessel=0.45, vessel_mm=28.0, vessel_col=(0.12, 0.030, 0.055),
+      perfusion=0.27, hue_shift=0.014),
 
     # ── Esophagus ────────────────────────────────────────────────────────────
     T("esophagus", "#9E6464", (0.36, 0.185, 0.165), rough=0.40,
       sss=0.60, sss_mm=1.4, sss_rgb=(1.00, 0.80, 0.67), sss_aniso=0.80,
-      coat=0.20, coat_rough=0.09, sheen=0.05,
+      coat=0.44, coat_rough=0.060, sheen=0.05,
       bump_type="vessel", bump_scale=0.20,
       micro=1.0, meso_mm=4.5, fine_mm=1.3,
-      vessel=0.26, vessel_mm=8.0, perfusion=0.11),
+      vessel=0.10, vessel_mm=20.0, perfusion=0.19),
 
     # ── Liver ────────────────────────────────────────────────────────────────
     # Bashkatov 2011: μ_s' = 17.5/12.8/9.2 cm⁻¹ at 632/532/457 nm; with μ_a ≈ 2.5 cm⁻¹
@@ -503,51 +503,51 @@ TISSUES = [
     # specular of any abdominal organ, hence the high coat weight and low coat roughness.
     T("liver", "#5C2018", (0.32, 0.085, 0.065), rough=0.26,
       sss=0.92, sss_mm=3.0, sss_rgb=(1.00, 0.74, 0.53), sss_aniso=0.85,
-      coat=0.34, coat_rough=0.030, sheen=0.04,
+      coat=0.62, coat_rough=0.022, sheen=0.04,
       bump_type="lobular", bump_scale=0.40,
       micro=1.25, macro_mm=28.0, meso_mm=6.0, fine_mm=1.5,
-      vessel=0.46, vessel_mm=15.0, vessel_col=(0.085, 0.018, 0.040),
-      perfusion=0.20, hue_shift=0.016),
+      vessel=0.40, vessel_mm=34.0, vessel_col=(0.085, 0.018, 0.040),
+      perfusion=0.34, hue_shift=0.016),
 
     # ── Stomach ──────────────────────────────────────────────────────────────
     T("stomach", "#9E916B", (0.44, 0.335, 0.235), rough=0.34,
       sss=0.62, sss_mm=1.8, sss_rgb=(1.00, 0.82, 0.70), sss_aniso=0.80,
-      coat=0.26, coat_rough=0.055, sheen=0.06,
+      coat=0.52, coat_rough=0.038, sheen=0.06,
       bump_type="wrinkled", bump_scale=0.45,
       micro=1.20, macro_mm=20.0, meso_mm=4.5, fine_mm=1.3,
-      vessel=0.32, vessel_mm=9.0, vessel_col=(0.14, 0.045, 0.055),
-      perfusion=0.13, hue_shift=0.012),
+      vessel=0.10, vessel_mm=22.0, vessel_col=(0.14, 0.045, 0.055),
+      perfusion=0.22, hue_shift=0.012),
 
     # ── Gallbladder ──────────────────────────────────────────────────────────
     # Thin translucent wall over green bile: deepest SSS relative to size, and the
     # green-dominant radius is genuine (bilirubin/biliverdin absorption), not stylistic.
     T("gallbladder", "#3A5E35", (0.105, 0.165, 0.075), rough=0.20,
       sss=0.95, sss_mm=3.4, sss_rgb=(0.42, 1.00, 0.58), sss_aniso=0.75,
-      coat=0.42, coat_rough=0.028, sheen=0.03,
+      coat=0.66, coat_rough=0.020, sheen=0.03,
       bump_type="lobular", bump_scale=0.30,
       micro=0.85, macro_mm=16.0, meso_mm=4.0, fine_mm=1.4,
-      vessel=0.24, vessel_mm=7.0, vessel_col=(0.05, 0.075, 0.030),
-      perfusion=0.12, hue_shift=0.010),
+      vessel=0.12, vessel_mm=18.0, vessel_col=(0.05, 0.075, 0.030),
+      perfusion=0.20, hue_shift=0.010),
 
     # ── Spleen ───────────────────────────────────────────────────────────────
     # Red pulp: the most purple of the parenchymal organs, and the most friable-
     # looking surface. Highest perfusion variance.
     T("spleen", "#523050", (0.245, 0.055, 0.080), rough=0.27,
       sss=0.90, sss_mm=2.6, sss_rgb=(1.00, 0.72, 0.56), sss_aniso=0.85,
-      coat=0.32, coat_rough=0.034, sheen=0.04,
+      coat=0.58, coat_rough=0.026, sheen=0.04,
       bump_type="lobular", bump_scale=0.40,
       micro=1.20, macro_mm=24.0, meso_mm=5.5, fine_mm=1.5,
-      vessel=0.40, vessel_mm=13.0, vessel_col=(0.075, 0.016, 0.050),
-      perfusion=0.22, hue_shift=0.018),
+      vessel=0.30, vessel_mm=30.0, vessel_col=(0.075, 0.016, 0.050),
+      perfusion=0.34, hue_shift=0.018),
 
     # ── Kidneys ──────────────────────────────────────────────────────────────
     *[T(n, "#4A1E28", (0.30, 0.100, 0.085), rough=0.26, ior=1.42,
         sss=0.88, sss_mm=2.4, sss_rgb=(1.00, 0.76, 0.59), sss_aniso=0.85,
-        coat=0.34, coat_rough=0.036, sheen=0.04,
+        coat=0.58, coat_rough=0.028, sheen=0.04,
         bump_type="lobular", bump_scale=0.45,
         micro=1.15, macro_mm=20.0, meso_mm=5.0, fine_mm=1.4,
-        vessel=0.38, vessel_mm=11.0, vessel_col=(0.10, 0.025, 0.045),
-        perfusion=0.17, hue_shift=0.014)
+        vessel=0.35, vessel_mm=26.0, vessel_col=(0.10, 0.025, 0.045),
+        perfusion=0.29, hue_shift=0.014)
       for n in ("kidney_right", "kidney_left")],
 
     # ── Pancreas ─────────────────────────────────────────────────────────────
@@ -555,11 +555,11 @@ TISSUES = [
     # lobules, not a smooth surface. Short macro wavelength drives that.
     T("pancreas", "#B09170", (0.46, 0.345, 0.235), rough=0.42,
       sss=0.72, sss_mm=1.7, sss_rgb=(1.00, 0.84, 0.72), sss_aniso=0.78,
-      coat=0.18, coat_rough=0.10, sheen=0.07,
+      coat=0.40, coat_rough=0.070, sheen=0.07,
       bump_type="lobular", bump_scale=0.40,
       micro=1.35, macro_mm=12.0, meso_mm=3.5, fine_mm=1.2,
-      vessel=0.24, vessel_mm=7.0, vessel_col=(0.16, 0.070, 0.045),
-      perfusion=0.15, hue_shift=0.010),
+      vessel=0.12, vessel_mm=18.0, vessel_col=(0.16, 0.070, 0.045),
+      perfusion=0.26, hue_shift=0.010),
 
     # ── Bowel ────────────────────────────────────────────────────────────────
     # v20 excluded hollow organs from SSS entirely. A bowel wall is 2-4 mm of
@@ -568,28 +568,28 @@ TISSUES = [
     # read as tan plastic tubing. Serosal vessel arcades are their signature feature.
     *[T(n, "#A38470", (0.42, 0.305, 0.245), rough=0.36,
         sss=0.68, sss_mm=1.9, sss_rgb=(1.00, 0.82, 0.70), sss_aniso=0.82,
-        coat=0.26, coat_rough=0.055, sheen=0.07,
+        coat=0.52, coat_rough=0.038, sheen=0.07,
         bump_type="wrinkled", bump_scale=0.40,
         micro=1.25, macro_mm=14.0, meso_mm=4.0, fine_mm=1.2,
-        vessel=0.44, vessel_mm=8.0, vessel_col=(0.15, 0.045, 0.050),
-        perfusion=0.14, hue_shift=0.012)
+        vessel=0.0,  vessel_mm=8.0, vessel_col=(0.15, 0.045, 0.050),
+        perfusion=0.24, hue_shift=0.012)
       for n in ("duodenum", "small_bowel")],
     T("colon", "#8F6E5C", (0.38, 0.270, 0.205), rough=0.36,
       sss=0.66, sss_mm=1.9, sss_rgb=(1.00, 0.82, 0.70), sss_aniso=0.82,
-      coat=0.26, coat_rough=0.055, sheen=0.07,
+      coat=0.52, coat_rough=0.038, sheen=0.07,
       bump_type="wrinkled", bump_scale=0.40,
       micro=1.25, macro_mm=16.0, meso_mm=4.5, fine_mm=1.3,
-      vessel=0.42, vessel_mm=9.0, vessel_col=(0.15, 0.045, 0.050),
-      perfusion=0.14, hue_shift=0.012),
+      vessel=0.0,  vessel_mm=9.0, vessel_col=(0.15, 0.045, 0.050),
+      perfusion=0.24, hue_shift=0.012),
 
     # ── Urinary bladder ──────────────────────────────────────────────────────
     T("urinary_bladder", "#6E758A", (0.22, 0.235, 0.290), rough=0.32,
       sss=0.64, sss_mm=1.6, sss_rgb=(1.00, 0.88, 0.80), sss_aniso=0.78,
-      coat=0.24, coat_rough=0.05, sheen=0.05,
+      coat=0.48, coat_rough=0.036, sheen=0.05,
       bump_type="smooth", bump_scale=0.20,
       micro=0.95, macro_mm=18.0, meso_mm=5.0, fine_mm=1.5,
-      vessel=0.28, vessel_mm=8.0, vessel_col=(0.13, 0.055, 0.075),
-      perfusion=0.10, hue_shift=0.008),
+      vessel=0.12, vessel_mm=20.0, vessel_col=(0.13, 0.055, 0.075),
+      perfusion=0.17, hue_shift=0.008),
 
     # ── Aorta ────────────────────────────────────────────────────────────────
     # Oxy-Hb scatters deepest in red. See AORTA_REALISTIC in the docstring: the real
@@ -598,11 +598,11 @@ TISSUES = [
       (0.42, 0.305, 0.265) if AORTA_REALISTIC else (0.40, 0.055, 0.038),
       rough=0.17,
       sss=0.80, sss_mm=1.3, sss_rgb=(1.00, 0.64, 0.40), sss_aniso=0.85,
-      coat=0.38, coat_rough=0.028, sheen=0.04,
+      coat=0.58, coat_rough=0.022, sheen=0.04,
       bump_type="vessel", bump_scale=0.20,
       micro=0.90, macro_mm=14.0, meso_mm=3.5, fine_mm=1.1,
-      vessel=0.20, vessel_mm=5.0, vessel_col=(0.14, 0.040, 0.040),
-      perfusion=0.09, hue_shift=0.008),
+      vessel=0.08, vessel_mm=16.0, vessel_col=(0.14, 0.040, 0.040),
+      perfusion=0.15, hue_shift=0.008),
 
     # ── Veins ────────────────────────────────────────────────────────────────
     # Deoxy-Hb absorbs more at 650 nm, so red penetrates less than in arteries —
@@ -612,8 +612,8 @@ TISSUES = [
         coat=0.34, coat_rough=0.028, sheen=0.04,
         bump_type="vessel", bump_scale=0.15,
         micro=0.90, macro_mm=14.0, meso_mm=3.5, fine_mm=1.1,
-        vessel=0.18, vessel_mm=5.0, vessel_col=(0.06, 0.030, 0.085),
-        perfusion=0.09, hue_shift=0.008)
+        vessel=0.08, vessel_mm=16.0, vessel_col=(0.06, 0.030, 0.085),
+        perfusion=0.15, hue_shift=0.008)
       for n in ("inferior_vena_cava", "portal_vein_and_splenic_vein",
                 "superior_vena_cava")],
 ]
@@ -782,67 +782,69 @@ def build_perfusion(nodes, links, vec_out, t, color_out):
 
 
 def build_vessels(nodes, links, vec_out, t, color_out, gain):
-    """Surface vasculature — two octaves of Voronoi edge network.
+    """Sparse branching vasculature from noise iso-contours.
 
-    After subsurface scattering this is the single strongest realism cue. Every real
-    organ shows a branching subcapsular vessel network; a uniformly tinted surface is
-    the clearest tell that something is CG. On lung the same field carries anthracotic
-    pigment instead of blood.
+    v23's first attempt used Voronoi DISTANCE_TO_EDGE. That is a crackle/mud-flat
+    pattern: a space-filling tessellation of uniform-width lines with uniform spacing.
+    Vasculature is none of those things — it branches, its calibre varies continuously,
+    and it covers a surface unevenly with large bare areas between arcades.
 
-    Returns (colour_out, height_out) — the height drives a shallow relief bump so
-    vessels catch light at grazing angles rather than reading as a decal.
+    This builds vessels as the |noise - 0.5| iso-contour instead:
+
+      · the contour of a smooth field is sinuous and branches naturally
+      · line width is inversely proportional to the local gradient, so calibre varies
+        on its own — no extra machinery
+      · a second, much lower-frequency mask gates where vessels appear at all, so the
+        surface has bare regions rather than uniform coverage
+
+    `vessel` in the tissue table is now coverage, not line darkness, and several organs
+    are set to 0: small bowel serosa carries straight vasa recta perpendicular to the
+    mesenteric border, which is a different pattern entirely and is not attempted here.
+
+    Returns (colour_out, height_out); height drives a shallow relief bump.
     """
-    name    = t["name"]
-    vis     = min(1.0, t["vessel"] * gain)
-    vcol    = t["vessel_col"]
+    name = t["name"]
+    vis  = min(1.0, t["vessel"] * gain)
+    if vis <= 0.0:
+        return color_out, None
+    vcol = t["vessel_col"]
 
-    # Warp the sampling coordinates with a low-frequency noise before evaluating the
-    # Voronoi. Undistorted Voronoi edges form a regular honeycomb, which is the giveaway
-    # that a vascular pattern is procedural — real arcades are irregular, and branch with
-    # varying calibre. Warping at ~2.5x the cell size bends the tessellation into
-    # something that reads as anatomy rather than as a Voronoi diagram.
-    warp_n = _noise(nodes, links, vec_out, t["vessel_mm"] * 2.5, _phase(name, 11),
-                    detail=2.0)
-    warp_off = nodes.new('ShaderNodeVectorMath')
-    warp_off.operation = 'SUBTRACT'
-    _set(warp_off, 1, (0.5, 0.5, 0.5))
-    _link_to(links, warp_n.outputs['Color'], warp_off, 0)
-    warp_amp = nodes.new('ShaderNodeVectorMath')
-    warp_amp.operation = 'SCALE'
-    _set(warp_amp, 'Scale', t["vessel_mm"] * 0.55)   # object space is mm
-    links.new(warp_off.outputs['Vector'], warp_amp.inputs[0])
-    warped = nodes.new('ShaderNodeVectorMath')
-    warped.operation = 'ADD'
-    links.new(vec_out, warped.inputs[0])
-    links.new(warp_amp.outputs['Vector'], warped.inputs[1])
-    vec_out = warped.outputs['Vector']
+    def _contour(wl_mm, width, seed):
+        """Thin band along the 0.5 iso-contour of a noise field."""
+        n = _noise(nodes, links, vec_out, wl_mm, seed, detail=2.5)
+        off = nodes.new('ShaderNodeMath'); off.operation = 'SUBTRACT'
+        links.new(n.outputs['Fac'], off.inputs[0]); _set(off, 1, 0.5)
+        ab = nodes.new('ShaderNodeMath'); ab.operation = 'ABSOLUTE'
+        links.new(off.outputs['Value'], ab.inputs[0])
+        # near the contour -> 1, away -> 0
+        return _map_range(nodes, links, ab.outputs['Value'], 1.0, 0.0,
+                          from_min=0.0, from_max=width).outputs['Result']
 
-    # Primary arcade.
-    v1 = _voronoi_edges(nodes, links, vec_out, t["vessel_mm"], _phase(name, 3))
-    # Line half-width doubled vs v21. Subsurface transport blurs base colour by
-    # roughly the SSS scale, so any albedo feature narrower than that is erased before
-    # it reaches the image — v21's 1.6 mm lines sat under a 3 mm blur and vanished.
-    r1 = _map_range(nodes, links, v1.outputs['Distance'], 0.0, 1.0,
-                    from_min=0.0, from_max=0.11)
-    f1 = _map_range(nodes, links, r1.outputs['Result'], 1.0 - vis, 1.0)
+    big   = _contour(t["vessel_mm"] * 2.2,  0.055, _phase(name, 3))
+    small = _contour(t["vessel_mm"] * 0.85, 0.030, _phase(name, 4))
 
-    # Secondary capillary blush — finer, fainter, and offset in phase.
-    v2 = _voronoi_edges(nodes, links, vec_out, t["vessel_mm"] * 0.34, _phase(name, 4))
-    r2 = _map_range(nodes, links, v2.outputs['Distance'], 0.0, 1.0,
-                    from_min=0.0, from_max=0.16)
-    f2 = _map_range(nodes, links, r2.outputs['Result'], 1.0 - vis * 0.45, 1.0)
+    # Union of the two calibres, small ones fainter.
+    sm = nodes.new('ShaderNodeMath'); sm.operation = 'MULTIPLY'
+    links.new(small, sm.inputs[0]); _set(sm, 1, 0.55)
+    un = nodes.new('ShaderNodeMath'); un.operation = 'MAXIMUM'
+    links.new(big, un.inputs[0]); links.new(sm.outputs['Value'], un.inputs[1])
 
-    # Combine: darkest of the two wins (MULTIPLY of two near-1 masks).
-    comb = nodes.new('ShaderNodeMath')
-    comb.operation = 'MULTIPLY'
-    links.new(f1.outputs['Result'], comb.inputs[0])
-    links.new(f2.outputs['Result'], comb.inputs[1])
+    # Coverage gate: large bare regions between vascular territories.
+    gate_n = _noise(nodes, links, vec_out, t["vessel_mm"] * 5.0, _phase(name, 12),
+                    detail=1.5)
+    gate = _map_range(nodes, links, gate_n.outputs['Fac'], 0.15, 1.0,
+                      from_min=0.34, from_max=0.60)
+    gated = nodes.new('ShaderNodeMath'); gated.operation = 'MULTIPLY'
+    links.new(un.outputs['Value'], gated.inputs[0])
+    links.new(gate.outputs['Result'], gated.inputs[1])
 
-    # Factor 0 on a vessel line → vessel colour; 1 elsewhere → tissue colour.
-    tinted = _mix_rgb(nodes, links, 'MIX', comb.outputs['Value'],
-                      a_val=tuple(vcol), b_out=color_out)
+    amt = nodes.new('ShaderNodeMath'); amt.operation = 'MULTIPLY'
+    links.new(gated.outputs['Value'], amt.inputs[0]); _set(amt, 1, vis)
 
-    return tinted.outputs[2], comb.outputs['Value']
+    # Factor 1 on a vessel -> vessel colour. (Mix returns A at 0, B at 1.)
+    tinted = _mix_rgb(nodes, links, 'MIX', amt.outputs['Value'],
+                      a_out=color_out, b_val=tuple(vcol))
+    return tinted.outputs[2], amt.outputs['Value']
 
 
 def build_micro_normals(nodes, links, vec_out, t, base_normal_out, detail_gain):
