@@ -28,7 +28,7 @@ from skimage.metrics import structural_similarity as ssim_fn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import preset
+from config import preset, PRESET_NAMES
 from dataset import PairedRenderDataset
 from networks import define_G
 from losses import build_lpips
@@ -215,7 +215,7 @@ def eval_single(args, cfg, device):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--preset", default="full1024", choices=["proto512", "full1024", "rgb_only", "overfit"])
+    ap.add_argument("--preset", default="full1024", choices=PRESET_NAMES)
     ap.add_argument("--data-root", default=None)
     ap.add_argument("--target", default=None, choices=["preview_png", "exr_agx", "exr_linear"])
     ap.add_argument("--input-buffers", default=None)

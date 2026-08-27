@@ -30,7 +30,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import preset
+from config import preset, PRESET_NAMES
 from networks import define_G
 from exr import read_render_exr
 from dataset import ORGAN_TO_GID, NUM_CANONICAL, _resize
@@ -105,7 +105,7 @@ def montage(imgs, cols=5, th=256):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--preset", default="full1024", choices=["proto512", "full1024", "rgb_only", "overfit"])
+    ap.add_argument("--preset", default="full1024", choices=PRESET_NAMES)
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--input-buffers", default=None)
     ap.add_argument("--view", default=None, help="a single view dir")
