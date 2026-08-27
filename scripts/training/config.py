@@ -200,6 +200,26 @@ def preset(name: str) -> Config:
         c.data.input_buffers = ["seg_rgb"]
         c.train.output_dir = "results/training_runs/rgb_only"
         return c
+    if name == "rgb_1024":
+        # The RGB-only ablation AT FULL RESOLUTION — this is what results/training_runs/
+        # rgb_baseline was actually trained with, and no preset described it.
+        #
+        # It matters that this derives from full1024 and not from rgb_only: rgb_only is
+        # 512 px, so evaluating the 1024 px rgb_baseline checkpoint under it would
+        # compare a different resolution AND a different input stack at once, which
+        # confounds the ablation. Deriving from full1024 changes exactly one thing —
+        # the input buffers — so a paired comparison against full1024 isolates the
+        # contribution of the G-buffers.
+        #
+        # Without this, loading rgb_baseline under PRESET=full1024 fails with
+        #   size mismatch for model.1.weight: copying a param with shape [64, 3, 7, 7]
+        #   from checkpoint, the shape in current model is [64, 8, 7, 7]
+        # because full1024 builds an 8-channel input (seg_rgb 3 + depth 1 + normals 3
+        # + segid 1) while the checkpoint has 3.
+        c = preset("full1024")
+        c.data.input_buffers = ["seg_rgb"]
+        c.train.output_dir = "results/training_runs/rgb_baseline"
+        return c
     if name == "overfit":
         # Step-1 sanity: memorise a handful of subjects (pass --subjects / --max-subjects).
         # Small + fast + frequent samples; if this won't drive L1→~0 and fake→GT,
@@ -215,4 +235,5 @@ def preset(name: str) -> Config:
         c.train.save_every = 100
         c.train.output_dir = "results/training_runs/overfit"
         return c
-    raise ValueError(f"unknown preset '{name}' (choose: proto512, full1024, rgb_only, overfit)")
+    raise ValueError(f"unknown preset '{name}' "
+                     f"(choose: proto512, full1024, rgb_1024, rgb_only, overfit)")
