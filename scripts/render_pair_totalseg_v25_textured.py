@@ -705,11 +705,11 @@ REFERENCE_LOOK = {
     # in the references the liver reads smooth and dark, not heavily veined.
     # Tuned by sweep: 0.26 red read as orange, and hue_shift 0.018 pushed patches into
     # visible yellow-green. Deeper and browner, with the hue drift almost off.
-    "liver": dict(sss=0.95, sheen=0.02, rough=0.22, base=(0.145, 0.032, 0.028), perfusion=0.60, vessel=0.30,
+    "liver": dict(sss=0.95, sheen=0.02, rough=0.22, base=(0.108, 0.036, 0.028), perfusion=0.60, vessel=0.30,
                   vessel_mm=34.0, vessel_col=(0.070, 0.014, 0.026), hue_shift=0.005),
     "spleen": dict(base=(0.135, 0.030, 0.050), perfusion=0.55, vessel=0.26,
                    vessel_mm=30.0, vessel_col=(0.065, 0.013, 0.042), hue_shift=0.007),
-    "kidney": dict(base=(0.200, 0.058, 0.048), perfusion=0.50, vessel=0.30,
+    "kidney": dict(base=(0.185, 0.068, 0.046), perfusion=0.50, vessel=0.30,
                    vessel_mm=26.0, vessel_col=(0.090, 0.022, 0.038), hue_shift=0.008),
     # Myocardium red-pink; coronary vessels are the prominent feature.
     "heart": dict(base=(0.300, 0.085, 0.072), perfusion=0.50, vessel=0.65,
@@ -754,7 +754,7 @@ REFERENCE_LOOK = {
     "vertebrae": dict(sss=0.10, sheen=0.05, rough=0.74, base=(0.62, 0.56, 0.46), perfusion=0.25, vessel=0.0,
                       hue_shift=0.006),
     # Dark red striated skeletal muscle.
-    "autochthon": dict(sss=0.35, sheen=0.26, rough=0.66, base=(0.30, 0.075, 0.060), perfusion=0.50, vessel=0.22,
+    "autochthon": dict(sss=0.35, sheen=0.26, rough=0.66, base=(0.255, 0.082, 0.098), perfusion=0.50, vessel=0.22,
                        vessel_mm=24.0, vessel_col=(0.12, 0.030, 0.030), hue_shift=0.014),
 }
 

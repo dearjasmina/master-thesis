@@ -128,6 +128,50 @@ def worley(size, rng, cells, jitter=0.9, kind="f1"):
     return _norm(d2 - d1) if kind == "edge" else _norm(d1)
 
 
+# ── Vessel calibres ──────────────────────────────────────────────────────────
+# MEASURED from Human Organ Atlas HiP-CT (CC-BY-4.0) via scripts/hoa_vessel_stats.py.
+# Method: Hessian multiscale vesselness with SCALE SELECTION — the sigma maximising
+# the ridge response gives the calibre directly, so it is immune to the wall-vs-lumen
+# problem that made an earlier segment-then-measure attempt meaningless (a bright-wall
+# detector returns broken crescents, and a distance transform on a crescent measures
+# arc thickness, not vessel radius). sigma -> radius = 1.336, CALIBRATED on synthetic
+# tubes of known radius rather than taken from the paper.
+#
+# Restricted to a subcapsular shell, because that is the network the renderer draws.
+#
+#   organ    donor           p50    p95    filter   detected   ROI quality
+#   liver    LADAF-2020-27   0.55   2.4    sato     0.0175     good
+#   kidney   LADAF-2020-27   0.9    1.5    sato     0.0008     good
+#   lung     LADAF-2020-27   0.2    2.4    sato     0.0013     good (hilum-weighted)
+#   heart    LADAF-2020-31   0.9    2.4    frangi   0.0042     good
+#   colon    LADAF-2021-17   0.9    1.5    frangi   0.0011     good (one segment)
+#
+# heart and colon need FRANGI, not Sato: their walls and trabeculae are SHEETS, and
+# Sato responds to sheets — it flagged 2.7 % of the heart volume as "vessel". Frangi
+# suppresses plate-like structure explicitly and drops that to 0.42 %.
+#
+# start_w below is the TRUNK radius. Since the tree tapers by Murray's law (0.794) over
+# ~5 levels, the typical DRAWN vessel is about start_w x 0.794^2.5 = 0.56 x start_w, so
+# start_w is set to p50 / 0.56 to make the typical rendered vessel match the measured
+# median.
+#
+# HONEST UNCERTAINTY: these p50s are threshold-sensitive. Loosening the detection
+# threshold raises them (kidney 0.9 -> 1.5, lung 0.2 -> 0.55) and pushes p95 against
+# the largest scale offered, which is a sign of over-growth rather than more anatomy.
+# The values below use the conservative setting. What is ROBUST across every method and
+# threshold tried is the ORDER OF MAGNITUDE: subcapsular vessels are 0.2-1.5 mm radius.
+# My original hand-picked values were 3.4 mm (liver) and 4.5 mm (heart) — that is the
+# quantitative form of "the veins look too prominent", and it is the finding that
+# actually matters here.
+#
+# NOT measured: split probability and segment length. The skeleton at this voxel size
+# gives 7604 branch points against 3620 endpoints, but a binary tree must have roughly
+# one MORE endpoint than branch point, so its topology is unusable. Those stay
+# hand-set, as do bowel, stomach, pancreas and the great-vessel walls (extrapolated).
+#
+# Three donors — cite each dataset DOI separately, plus the HOA paper
+# (DOI 10.1126/sciadv.adz2240).
+
 def vessel_tree(size, rng, n_roots=5, depth=7, step=None, start_w=None,
                 curl=0.45, split=0.62, taper=0.72, aniso=None):
     """Recursively grown branching vessel network, drawn on a torus.
@@ -204,6 +248,28 @@ def soften(a, sigma_px):
     return np.real(np.fft.ifft2(np.fft.fft2(a) * g))
 
 
+# Measured off the Visible Korean abdominal section (Park et al., 2015, Int J Morphol
+# 33(4):1323-1332, Fig. 5b): subcutaneous fat samples at sRGB (205,152,80) and
+# (194,141,101) -> linear ~(0.61, 0.32, 0.08). Green sits near HALF of red; adipose is
+# a strong yellow-orange, not a cream. Two earlier guesses here were both wrong in the
+# same direction, the second worse than the first: what made fat read as pathology was
+# that it was splatted as opaque CIRCLES, not that it was too yellow.
+# Fresh adipose photographs around sRGB (240, 220, 150) -> linear (0.83, 0.69, 0.29).
+# The first correction over-shot into olive: 0.42/0.355/0.215 is dark and green-
+# leaning, which on a pink serosa reads as a bruise rather than fat. Pale and warm.
+FAT_RGB = np.array((0.612, 0.316, 0.081), np.float32)
+
+
+def lobulate(mask, size, rng, freq=9.0):
+    """Break round speckle discs into irregular lobulated patches.
+
+    A gaussian splat is a perfect circle; fat tags are pendulous and lumpy. Modulating
+    by a mid-frequency noise and re-thresholding keeps the placement but destroys the
+    tell-tale circularity."""
+    n = spectral_noise(size, rng, freq)
+    return np.clip(mask * (0.45 + 1.15 * n) - 0.10, 0.0, 1.0)
+
+
 def speckle(size, rng, count, radius, softness=1.6):
     """Wrapped point splatter — anthracotic pigment, fat flecks."""
     acc = np.zeros((size, size), np.float32)
@@ -260,9 +326,11 @@ def r_liver(S, rng, mm):
     zones = fbm(S, rng, 2.2, 3)                       # broad congested / perfused zones
     grain = fbm(S, rng, 34.0, 3)                      # fine parenchymal granularity
     caps  = fbm(S, rng, 9.0, 4)                       # Glisson capsule stretch
-    vein  = vessel_tree(S, rng, n_roots=3, depth=5, start_w=3.4*mm, step=9.0*mm, split=0.5)
+    vein  = vessel_tree(S, rng, n_roots=3, depth=5, start_w=0.98*mm, step=4.0*mm, split=0.5)
+    # Measured VK liver (0.101, 0.034, 0.026) linear; range straddles it. Note this is
+    # a CUT FACE — parenchyma, not Glisson's capsule — so it is a floor, not a target.
     base  = tint(0.35 + 0.5 * zones + 0.15 * grain,
-                 (0.105, 0.022, 0.019), (0.235, 0.062, 0.052))
+                 (0.072, 0.024, 0.019), (0.142, 0.048, 0.037))
     base *= (1.0 - 0.26 * soften(vein, 1.6*mm))[..., None]            # vessels darken, not tint
     h = 0.55 * caps + 0.25 * grain + 0.35 * vein
     r = 0.30 + 0.18 * (1 - caps)
@@ -270,21 +338,24 @@ def r_liver(S, rng, mm):
 
 
 def r_lung(S, rng, mm):
-    septa = worley(S, rng, 13, kind="edge")           # interlobular septa
-    septa = np.clip(1.0 - septa * 3.2, 0, 1)
+    # Interlobular septa are faint outlines on a fresh lung, not a strong polygonal
+    # net. At 1 - edge*3.2 they became thick bands and the surface read as cracked mud.
+    # Narrow threshold, then soften — barely-there is correct here.
+    septa = worley(S, rng, 9, kind="edge")
+    septa = soften(np.clip(1.0 - septa * 8.0, 0, 1), 0.8 * mm)
     mott  = fbm(S, rng, 3.4, 4)
-    fine  = vessel_tree(S, rng, n_roots=8, depth=6, start_w=1.8*mm,
-                        step=5.0*mm, split=0.72)
+    fine  = vessel_tree(S, rng, n_roots=8, depth=6, start_w=0.36*mm,
+                        step=2.4*mm, split=0.72)
     # Anthracotic pigment: carbon deposits collect ALONG the septa, not uniformly.
-    carbon = speckle(S, rng, 240, 0.55*mm) * (0.35 + 0.65 * septa)
+    carbon = speckle(S, rng, 240, 0.55*mm) * (0.55 + 0.45 * septa)
     # Darker and more saturated than the first pass: SSS at 0.70 plus the coat lift
     # the rendered result well above the albedo, so a texture that looks correct as a
     # flat tile renders as pale grey-pink on the organ.
-    base = tint(0.30 + 0.55 * mott + 0.22 * septa,
+    base = tint(0.34 + 0.60 * mott + 0.06 * septa,
                 (0.190, 0.098, 0.104), (0.395, 0.222, 0.226))
     base *= (1.0 - 0.14 * soften(fine, 1.3*mm))[..., None]
-    base *= (1.0 - 0.72 * carbon)[..., None]
-    h = 0.45 * septa + 0.30 * mott + 0.20 * fine
+    base *= (1.0 - 0.45 * carbon)[..., None]
+    h = 0.16 * septa + 0.42 * mott + 0.18 * fine
     r = 0.42 + 0.22 * mott
     return base, h, r
 
@@ -293,13 +364,13 @@ def r_bowel(S, rng, mm):
     ang   = math.pi / 2
     folds = fbm(S, rng, 12.0, 3, aniso=7.0, angle=ang)      # transverse mucosal folds
     # vasa recta run roughly perpendicular to the mesenteric border: biased growth
-    vasa  = vessel_tree(S, rng, n_roots=14, depth=5, start_w=2.2*mm,
-                        step=4.5*mm, split=0.55, curl=0.30, aniso=0.0)
+    vasa  = vessel_tree(S, rng, n_roots=14, depth=5, start_w=0.90*mm,
+                        step=2.8*mm, split=0.55, curl=0.30, aniso=0.0)
     fat   = speckle(S, rng, 9,  2.6*mm)                   # mesenteric fat tags
     base  = tint(0.35 + 0.55 * folds, (0.440, 0.215, 0.160), (0.660, 0.390, 0.300))
     base *= (1.0 - 0.40 * soften(vasa, 0.7*mm))[..., None]
-    fat3 = np.clip(fat, 0, 1)[..., None] * 0.75
-    base  = base * (1 - fat3) + np.array((0.55, 0.40, 0.16), np.float32) * fat3
+    fat3 = lobulate(fat, S, rng)[..., None] * 0.42
+    base = base * (1 - fat3) + FAT_RGB * fat3
     h = 0.70 * folds + 0.25 * vasa + 0.4 * fat
     r = 0.26 + 0.14 * folds
     return base, h, r
@@ -308,13 +379,13 @@ def r_bowel(S, rng, mm):
 def r_colon(S, rng, mm):
     haustra = fbm(S, rng, 5.0, 2, aniso=9.0, angle=math.pi / 2)   # haustral banding
     taenia  = fbm(S, rng, 2.0, 1, aniso=14.0, angle=0.0)          # longitudinal taeniae
-    vein    = vessel_tree(S, rng, n_roots=7, depth=5, start_w=2.6*mm, step=7.0*mm, split=0.6)
+    vein    = vessel_tree(S, rng, n_roots=7, depth=5, start_w=1.60*mm, step=3.6*mm, split=0.6)
     fat     = speckle(S, rng, 14, 3.4*mm)                       # appendices epiploicae
     base = tint(0.35 + 0.5 * haustra + 0.2 * taenia,
                 (0.330, 0.180, 0.180), (0.520, 0.310, 0.295))
     base *= (1.0 - 0.26 * soften(vein, 1.1*mm))[..., None]
-    fat3 = np.clip(fat, 0, 1)[..., None] * 0.75
-    base = base * (1 - fat3) + np.array((0.58, 0.43, 0.18), np.float32) * fat3
+    fat3 = lobulate(fat, S, rng)[..., None] * 0.42
+    base = base * (1 - fat3) + FAT_RGB * fat3
     h = 0.85 * haustra + 0.3 * taenia + 0.45 * fat
     r = 0.26 + 0.14 * haustra
     return base, h, r
@@ -322,10 +393,10 @@ def r_colon(S, rng, mm):
 
 def r_pancreas(S, rng, mm):
     lob  = worley(S, rng, 11, kind="f1")              # coarse lobules
-    edge = np.clip(1.0 - worley(S, rng, 11, kind="edge") * 3.0, 0, 1)
+    edge = soften(np.clip(1.0 - worley(S, rng, 11, kind="edge") * 5.0, 0, 1), 0.7 * mm)
     base = tint(0.30 + 0.6 * lob, (0.360, 0.250, 0.150), (0.560, 0.430, 0.290))
-    base = base * (1 - 0.55 * edge[..., None]) + \
-           tint(np.ones((S, S)), (0.52, 0.40, 0.20), (0.52, 0.40, 0.20)) * 0.55 * edge[..., None]
+    e3 = 0.30 * edge[..., None]
+    base = base * (1 - e3) + FAT_RGB * e3
     h = 0.9 * lob - 0.5 * edge
     r = 0.48 + 0.20 * (1 - lob)
     return base, h, np.clip(r, 0, 1)
@@ -333,7 +404,7 @@ def r_pancreas(S, rng, mm):
 
 def r_stomach(S, rng, mm):
     rugae = fbm(S, rng, 7.0, 3, aniso=5.0, angle=0.6)   # rugal folds
-    vein  = vessel_tree(S, rng, n_roots=4, depth=4, start_w=1.5*mm, step=7.0*mm, split=0.5)
+    vein  = vessel_tree(S, rng, n_roots=4, depth=4, start_w=0.75*mm, step=3.2*mm, split=0.5)
     base  = tint(0.35 + 0.55 * rugae, (0.400, 0.280, 0.230), (0.580, 0.430, 0.360))
     base *= (1.0 - 0.18 * soften(vein, 1.2*mm))[..., None]
     return base, 0.8 * rugae + 0.2 * vein, 0.28 + 0.14 * rugae
@@ -349,28 +420,28 @@ def r_spleen(S, rng, mm):
 
 def r_kidney(S, rng, mm):
     cap  = fbm(S, rng, 4.0, 3)
-    vein = vessel_tree(S, rng, n_roots=3, depth=5, start_w=2.8*mm, step=7.0*mm, split=0.55)
-    base = tint(0.32 + 0.55 * cap, (0.140, 0.040, 0.034), (0.250, 0.080, 0.066))
+    vein = vessel_tree(S, rng, n_roots=3, depth=5, start_w=1.60*mm, step=3.0*mm, split=0.55)
+    base = tint(0.32 + 0.55 * cap, (0.120, 0.045, 0.030), (0.235, 0.085, 0.058))
     base *= (1.0 - 0.20 * soften(vein, 1.4*mm))[..., None]
     return base, 0.45 * cap + 0.3 * vein, 0.30 + 0.12 * cap
 
 
 def r_heart(S, rng, mm):
     fibre = fbm(S, rng, 18.0, 3, aniso=6.0, angle=0.9)          # myocardial fibre run
-    cor   = vessel_tree(S, rng, n_roots=3, depth=6, start_w=4.5*mm, step=9.0*mm, split=0.55)
+    cor   = vessel_tree(S, rng, n_roots=3, depth=6, start_w=1.60*mm, step=4.0*mm, split=0.55)
     fat   = speckle(S, rng, 10, 3.6*mm) * np.clip(soften(cor, 1.2*mm) * 1.8 - 0.18, 0, 1)  # fat follows grooves
     base  = tint(0.32 + 0.5 * fibre, (0.220, 0.060, 0.050), (0.360, 0.115, 0.095))
-    base *= (1.0 - 0.38 * soften(cor, 0.9*mm))[..., None]
-    fat3 = np.clip(fat, 0, 1)[..., None] * 0.80
-    base  = base * (1 - fat3) + np.array((0.56, 0.44, 0.20), np.float32) * fat3
+    base *= (1.0 - 0.26 * soften(cor, 1.1*mm))[..., None]
+    fat3 = lobulate(fat, S, rng)[..., None] * 0.46
+    base = base * (1 - fat3) + FAT_RGB * fat3
     return base, 0.35 * fibre + 0.55 * cor + 0.4 * fat, 0.30 + 0.16 * fibre
 
 
 def r_autochthon(S, rng, mm):
     fibre = fbm(S, rng, 26.0, 4, aniso=12.0, angle=math.pi / 2)  # strong striation
     peri  = worley(S, rng, 9, kind="edge")
-    base  = tint(0.30 + 0.6 * fibre, (0.200, 0.045, 0.038), (0.380, 0.105, 0.085))
-    base *= (1.0 - 0.30 * np.clip(1 - peri * 3, 0, 1))[..., None]
+    base  = tint(0.30 + 0.6 * fibre, (0.175, 0.052, 0.062), (0.330, 0.108, 0.130))
+    base *= (1.0 - 0.14 * soften(np.clip(1 - peri * 5, 0, 1), 0.9 * mm))[..., None]
     return base, 0.8 * fibre, 0.48 + 0.18 * fibre
 
 
@@ -384,7 +455,7 @@ def r_vertebrae(S, rng, mm):
 
 def r_vessel_wall(S, rng, mm, col_lo, col_hi):
     stri = fbm(S, rng, 20.0, 3, aniso=10.0, angle=math.pi / 2)   # longitudinal fibres
-    vasa = vessel_tree(S, rng, n_roots=6, depth=3, start_w=1.4*mm, step=5.0*mm, split=0.4)
+    vasa = vessel_tree(S, rng, n_roots=6, depth=3, start_w=0.60*mm, step=2.6*mm, split=0.4)
     base = tint(0.35 + 0.55 * stri, col_lo, col_hi)
     base *= (1.0 - 0.16 * soften(vasa, 1.0*mm))[..., None]
     return base, 0.5 * stri + 0.2 * vasa, 0.22 + 0.12 * stri
