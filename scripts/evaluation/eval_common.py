@@ -33,7 +33,7 @@ _TRAIN_DIR = Path(__file__).resolve().parents[1] / "training"
 if str(_TRAIN_DIR) not in sys.path:
     sys.path.insert(0, str(_TRAIN_DIR))
 
-from config import preset                      # noqa: E402
+from config import preset, PRESET_NAMES        # noqa: E402
 from dataset import PairedRenderDataset        # noqa: E402
 from networks import define_G                  # noqa: E402
 
@@ -41,7 +41,7 @@ from networks import define_G                  # noqa: E402
 def add_common_args(ap):
     """Arguments every evaluation script shares."""
     ap.add_argument("--preset", default="full1024",
-                    choices=["proto512", "full1024", "rgb_only", "overfit"])
+                    choices=PRESET_NAMES)
     ap.add_argument("--checkpoint", required=True,
                     help="e.g. results/training_runs/full1024/checkpoints/latest.pt")
     ap.add_argument("--data-root", default=None)

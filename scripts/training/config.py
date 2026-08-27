@@ -171,6 +171,13 @@ class Config:
 
 
 # ── Presets ───────────────────────────────────────────────────────────────────
+# Every preset name, in one place. The argparse `choices=` lists in train.py,
+# evaluate.py, infer.py and eval_common.py used to hardcode this separately, so adding
+# a preset made config.preset() accept it while the CLIs still rejected it — which is
+# exactly how rgb_1024 failed after being added correctly.
+PRESET_NAMES = ("proto512", "full1024", "rgb_1024", "rgb_only", "overfit")
+
+
 def preset(name: str) -> Config:
     """Named starting points. Override individual fields from the CLI in train.py."""
     if name == "proto512":

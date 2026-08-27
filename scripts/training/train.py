@@ -31,7 +31,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # make local modules importable
 
-from config import preset, ALL_INPUT_BUFFERS
+from config import preset, ALL_INPUT_BUFFERS, PRESET_NAMES
 from dataset import PairedRenderDataset
 from networks import define_G, define_D
 from losses import GANLoss, VGGLoss, feature_matching_loss, build_lpips
@@ -74,7 +74,7 @@ def log(rank, msg):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--preset", default="full1024",
-                   choices=["proto512", "full1024", "rgb_only", "overfit"])
+                   choices=PRESET_NAMES)
     p.add_argument("--data-root", default=None)
     p.add_argument("--output-dir", default=None)
     p.add_argument("--epochs", type=int, default=None)
