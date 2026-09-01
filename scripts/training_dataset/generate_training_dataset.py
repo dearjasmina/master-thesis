@@ -33,14 +33,39 @@ Run:
         --subject s0050 --spp 256 --size 512 --device GPU
 """
 
+# render_pass() re-enables the compositor after a G-buffer pass but has no access to
+# main()'s feature dict. The dataset is always generated training-safe (no chromatic
+# aberration or glare — both screen-space and positional, so a convolutional generator
+# cannot learn them and they act as label noise), so a module-level constant is correct
+# here and cannot drift from the per-run flags.
+_FEAT_FOR_PASSES = {"training_safe": True, "env": True}
+
 import bpy
 import sys
 import os
 import math
 import json
 import argparse
+import importlib.util
 import numpy as np
 from pathlib import Path
+
+# ── Shading comes from the render script, NOT a copy of it ───────────────────
+# This file used to duplicate v20's tissue table, materials, lighting and world.
+# That is how the dataset silently stayed on v20 shading while the pair renderer
+# advanced to v25: two copies of the same logic, only one of them maintained.
+# Importing the render script makes it the single source of truth, so the dataset
+# and the pair preview can never disagree again.
+#
+# Its main() is guarded by __name__, so importing runs only the module-level table
+# construction (TISSUES, REFERENCE_LOOK, apply_reference_look) — which is what we want.
+_V_PATH = Path(__file__).resolve().parent.parent / "render_pair_totalseg_v25_textured.py"
+_spec = importlib.util.spec_from_file_location("v25", _V_PATH)
+V = importlib.util.module_from_spec(_spec)
+_argv_backup = sys.argv
+sys.argv = ["v25"]                       # v25 parses argv only inside main(); be safe
+_spec.loader.exec_module(V)
+sys.argv = _argv_backup
 
 
 # ── Parse args ────────────────────────────────────────────────────────────────
@@ -64,45 +89,64 @@ def get_args():
     # Reference organ scale (metres) at which the base light energies are correct.
     # Exposure is held constant across organ sizes via energy ∝ (scene_scale/ref)².
     # Lower → brighter; raise if renders are overexposed, lower if too dark.
-    ap.add_argument("--light-ref", type=float, default=0.4)
+    # Reference scale for v25's size-invariant exposure. v25 recalibrated this from
+    # 0.40 to 0.78 m: the 0.40 constant was set against the CT extent, and once framing
+    # moved to the (smaller) organ extent the lights sat closer AND got scaled up,
+    # compounding to roughly 4x too bright.
+    ap.add_argument("--light-ref", type=float, default=0.78,
+                    help="UNUSED since the v25 port. v25.setup_lights does its own "
+                         "size-invariant exposure normalised at 0.78 m internally, so "
+                         "this no longer affects anything. Kept only so existing "
+                         "run scripts that pass it do not break.")
+    # ── v25 shading controls (forwarded to the imported render script) ──
+    ap.add_argument("--tex_dir",    default="data/renders/textures/tissue",
+                    help="synthesised PBR maps from synth_tissue_textures.py")
+    ap.add_argument("--tex_mm",     type=float, default=80.0,
+                    help="real-world tile size of those maps; MUST match the --tex_mm "
+                         "used to generate them")
+    ap.add_argument("--tex_tint",   type=float, default=0.0)
+    ap.add_argument("--saturation", type=float, default=1.05)
+    ap.add_argument("--exposure",   type=float, default=-1.00)
+    ap.add_argument("--sss_scale",  type=float, default=0.90)
+    ap.add_argument("--albedo",     type=float, default=1.00)
+    ap.add_argument("--smooth",     type=int,   default=0,
+                    help="render-time Laplacian smoothing. 0 is correct once meshes are "
+                         "re-extracted with the float32 + relaxation 0.3 fix; raise only "
+                         "if the marching-cubes staircase reappears.")
+    ap.add_argument("--smooth_factor", type=float, default=0.5)
+    # Read by v25.setup_render / setup_camera.
+    ap.add_argument("--fstop",   type=float, default=11.0,
+                    help="v20 used 6.3, which defocused most of the field")
+    ap.add_argument("--view_transform", default="AgX")
+    ap.add_argument("--look",    default="AgX - Medium Contrast")
+    ap.add_argument("--walls", action="store_true",
+                    help="negative-fill side planes. Off by default in v25 — with the "
+                         "organ-bbox framing they sit in shot and light up as a backdrop.")
+    ap.add_argument("--no-vessels",   dest="vessels",   action="store_false")
+    ap.add_argument("--no-perfusion", dest="perfusion", action="store_false")
+    ap.add_argument("--no-micro",     dest="micro",     action="store_false")
     return ap.parse_args(argv)
 
 
-# ── Tissue definitions — identical to v20 ────────────────────────────────────
-# (name, simple_hex, base_rgb, rough, ior,
-#  sss_weight, sss_scale_mm, sss_radius_rgb,
-#  coat_weight, coat_roughness, bump_type, bump_scale)
-TISSUES = [
-    ("autochthon_left",   "#4A3E3D", [0.04, 0.025, 0.02], 0.55, 1.40, 0.01, 1.0, (2.0,1.4,1.0),  0.05, 0.20, "fibrous",  0.15),
-    ("autochthon_right",  "#4A3E3D", [0.04, 0.025, 0.02], 0.55, 1.40, 0.01, 1.0, (2.0,1.4,1.0),  0.05, 0.20, "fibrous",  0.15),
-    ("lung_lower_lobe_left",  "#9C8585", [0.20, 0.14, 0.13], 0.42, 1.36, 0.03, 1.2, (1.6,1.2,1.0),  0.12, 0.15, "smooth", 0.10),
-    ("lung_lower_lobe_right", "#9C8585", [0.20, 0.14, 0.13], 0.42, 1.36, 0.03, 1.2, (1.6,1.2,1.0),  0.12, 0.15, "smooth", 0.10),
-    ("lung_upper_lobe_left",  "#9C8585", [0.20, 0.14, 0.13], 0.42, 1.36, 0.03, 1.2, (1.6,1.2,1.0),  0.12, 0.15, "smooth", 0.10),
-    ("lung_upper_lobe_right", "#9C8585", [0.20, 0.14, 0.13], 0.42, 1.36, 0.03, 1.2, (1.6,1.2,1.0),  0.12, 0.15, "smooth", 0.10),
-    ("vertebrae_T12", "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("vertebrae_L1",  "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("vertebrae_L2",  "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("vertebrae_L3",  "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("vertebrae_L4",  "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("vertebrae_L5",  "#C5BEB2", [0.23, 0.21, 0.18], 0.78, 1.55, 0.0, 0.0, (0.0,0.0,0.0), 0.0, 0.40, "none", 0.0),
-    ("heart",      "#8A2A2A", [0.13, 0.03, 0.025], 0.35, 1.40, 0.04, 1.8, (1.9,1.4,1.0),  0.22, 0.06, "lobular", 0.35),
-    ("esophagus",  "#9E6464", [0.18, 0.09, 0.08],  0.40, 1.40, 0.02, 1.5, (1.5,1.2,1.0),  0.12, 0.10, "vessel",  0.20),
-    ("liver",      "#5C2018", [0.10, 0.02, 0.015], 0.24, 1.38, 0.05, 1.8, (1.9,1.4,1.0),  0.25, 0.04, "lobular", 0.40),
-    ("stomach",    "#9E916B", [0.22, 0.18, 0.12],  0.34, 1.40, 0.04, 2.0, (1.5,1.1,1.0),  0.18, 0.08, "wrinkled",0.45),
-    ("gallbladder","#3A5E35", [0.03, 0.08, 0.02],  0.20, 1.40, 0.05, 1.8, (0.4,2.2,0.6),  0.35, 0.04, "lobular", 0.30),
-    ("spleen",     "#523050", [0.09, 0.02, 0.05],  0.25, 1.40, 0.04, 1.8, (1.8,1.3,1.0),  0.25, 0.04, "lobular", 0.40),
-    ("kidney_right","#4A1E28", [0.08, 0.02, 0.03], 0.24, 1.42, 0.04, 1.8, (1.7,1.3,1.0),  0.28, 0.05, "lobular", 0.45),
-    ("kidney_left", "#4A1E28", [0.08, 0.02, 0.03], 0.24, 1.42, 0.04, 1.8, (1.7,1.3,1.0),  0.28, 0.05, "lobular", 0.45),
-    ("pancreas",   "#B09170", [0.24, 0.19, 0.14],  0.42, 1.40, 0.03, 1.5, (1.5,1.2,1.0),  0.15, 0.10, "lobular", 0.40),
-    ("duodenum",   "#A38470", [0.21, 0.16, 0.13],  0.38, 1.40, 0.02, 1.8, (1.5,1.2,1.0),  0.18, 0.08, "wrinkled",0.40),
-    ("small_bowel","#A38470", [0.21, 0.16, 0.13],  0.38, 1.40, 0.02, 1.8, (1.5,1.2,1.0),  0.18, 0.08, "wrinkled",0.40),
-    ("colon",      "#8F6E5C", [0.18, 0.13, 0.10],  0.38, 1.40, 0.02, 1.8, (1.4,1.1,1.0),  0.18, 0.08, "wrinkled",0.40),
-    ("urinary_bladder","#6E758A",[0.10,0.11,0.14], 0.32, 1.40, 0.02, 1.5, (1.4,1.2,1.0),  0.20, 0.06, "smooth",  0.20),
-    ("aorta",                       "#A31414", [0.28,0.02,0.01], 0.15, 1.38, 0.04, 1.0, (2.5,1.6,1.0), 0.35, 0.03, "vessel", 0.20),
-    ("inferior_vena_cava",          "#3D2050", [0.05,0.02,0.08], 0.16, 1.38, 0.04, 1.0, (1.4,1.2,0.9), 0.30, 0.03, "vessel", 0.15),
-    ("portal_vein_and_splenic_vein","#3D2050", [0.05,0.02,0.08], 0.16, 1.38, 0.04, 1.0, (1.4,1.2,0.9), 0.28, 0.03, "vessel", 0.15),
-    ("superior_vena_cava",          "#3D2050", [0.05,0.02,0.08], 0.16, 1.38, 0.04, 1.0, (1.4,1.2,0.9), 0.30, 0.03, "vessel", 0.15),
-]
+def v25_features(args):
+    """Feature dict in the shape v25.make_material()/setup_world()/setup_lights() expect."""
+    return dict(
+        sss_fix=True, micro=args.micro, vessels=args.vessels, perfusion=args.perfusion,
+        env=True, denoise=True, tone_fix=True, detail=1.0, vessel_gain=1.0,
+        saturation=args.saturation, sss_method="RANDOM_WALK",
+        training_safe=True,          # no chromatic aberration / glare: screen-space and
+                                     # positional, so a conv generator cannot learn them
+        legacy_bump=False,
+        tex_dir=args.tex_dir, tex_tint=args.tex_tint, tex_mm=args.tex_mm,
+    )
+
+
+# Tissue definitions, materials, lighting, camera and compositor all live in
+# render_pair_totalseg_v25_textured.py and are used via the `V` import above.
+# They were duplicated here until an audit found eight diverged render settings —
+# denoising, three bounce counts, blur_glossy, the pixel filter, firefly clamp and
+# aperture — so the dataset was being generated with v20 shading while the previews
+# used v25. Deleting the copies is what stops that recurring.
 
 TEX_DIR = Path("data/renders/textures")
 
@@ -116,67 +160,28 @@ def reset_scene():
         bpy.data.collections.remove(col)
 
 
-def setup_render(spp, size, device):
+def setup_render(args, feat):
+    """Cycles/tone setup delegated to v25, then the dataset's own G-buffer passes.
+
+    This used to be a COPY of v20's setup_render, and an audit against v25 showed eight
+    shading-critical settings had silently diverged:
+
+        denoising            OFF          -> ON (OIDN, ACCURATE, albedo+normal guides)
+        diffuse_bounces      2            -> 4    (inter-organ red bounce)
+        transmission_bounces 6            -> 8
+        volume_bounces       1            -> 2
+        blur_glossy          0.2          -> 0.02 (0.2 smears the wet-film glints)
+        pixel filter         BOX 0.5      -> BLACKMAN_HARRIS 1.5
+        sample_clamp_indirect absent      -> 4.0  (firefly control)
+        aperture             f/6.3        -> f/11
+
+    Any one of those makes the dataset differ from the previews the look was tuned on,
+    so this now CALLS v25 rather than re-stating it. Only the passes below are
+    dataset-specific: v25 renders a single beauty image, the dataset also needs the
+    depth / normal / index side-channels.
+    """
+    V.setup_render(args, feat)
     scene = bpy.context.scene
-    scene.render.engine = 'CYCLES'
-    scene.cycles.samples = spp
-    scene.cycles.use_denoising = False
-
-    if device == 'GPU':
-        prefs = bpy.context.preferences.addons['cycles'].preferences
-        prefs.compute_device_type = 'CUDA'
-        prefs.get_devices()
-        for d in prefs.devices:
-            d.use = True
-        scene.cycles.device = 'GPU'
-        print(f"[GPU] CUDA devices: {[d.name for d in prefs.devices if d.use]}")
-    else:
-        scene.cycles.device = 'CPU'
-    scene.render.film_transparent = False
-
-    scene.cycles.max_bounces             = 12
-    scene.cycles.diffuse_bounces         = 2
-    scene.cycles.glossy_bounces          = 4
-    scene.cycles.transmission_bounces    = 6
-    scene.cycles.volume_bounces          = 1
-    scene.cycles.transparent_max_bounces = 12
-    scene.cycles.blur_glossy             = 0.2
-
-    scene.cycles.pixel_filter_type = 'BOX'
-    scene.cycles.filter_width      = 0.5
-
-    scene.render.resolution_x = size
-    scene.render.resolution_y = size
-    scene.render.image_settings.file_format = 'PNG'
-    scene.frame_current = 1  # ensures OutputFile uses 0001 suffix consistently
-
-    scene.world = bpy.data.worlds.new("World")
-    scene.world.use_nodes = True
-    wt = scene.world.node_tree
-    wt.nodes.clear()
-    wout = wt.nodes.new('ShaderNodeOutputWorld')
-
-    bg = wt.nodes.new('ShaderNodeBackground')
-    bg.inputs['Color'].default_value    = (0.001, 0.001, 0.001, 1)
-    bg.inputs['Strength'].default_value = 0.01
-    wt.links.new(bg.outputs['Background'], wout.inputs['Surface'])
-
-    vol = wt.nodes.new('ShaderNodeVolumeScatter')
-    vol.inputs['Color'].default_value     = (0.72, 0.75, 0.82, 1)
-    vol.inputs['Density'].default_value   = 0.0015
-    vol.inputs['Anisotropy'].default_value = 0.25
-    wt.links.new(vol.outputs['Volume'], wout.inputs['Volume'])
-
-    scene.view_settings.view_transform = 'AgX'
-    try:
-        scene.view_settings.look = 'AgX - Medium Contrast'
-    except Exception:
-        try:
-            scene.view_settings.look = 'AgX - Medium High Contrast'
-        except Exception:
-            pass
-    scene.view_settings.exposure = 0.0
-    scene.unit_settings.system = 'METRIC'
 
     # Enable ONLY the G-buffer passes the training pipeline conditions on. These land
     # in render.exr (OPEN_EXR_MULTILAYER) at zero extra render cost. Disabling a pass
@@ -199,50 +204,6 @@ def setup_render(spp, size, device):
     except AttributeError:
         pass  # not present in Blender 5.x
 
-
-def setup_compositor(scene):
-    """
-    Applies subtle RGB post-processing (glare + CA) for the preview PNG only.
-    Fails silently if scene.node_tree is unavailable (Blender 5.x).
-    Training data comes from the scene-linear MULTILAYER EXR, not the PNG.
-    """
-    try:
-        scene.use_nodes = True
-        tree = getattr(scene, 'node_tree', None)
-        if tree is None:
-            return
-        tree.nodes.clear()
-
-        rl  = tree.nodes.new('CompositorNodeRLayers')
-        out = tree.nodes.new('CompositorNodeComposite')
-
-        glare = tree.nodes.new('CompositorNodeGlare')
-        glare.glare_type = 'FOG_GLOW'
-        glare.quality    = 'HIGH'
-        glare.threshold  = 0.88
-        glare.size       = 5
-        glare.mix        = -0.97
-
-        lens = tree.nodes.new('CompositorNodeLensdist')
-        lens.inputs['Distortion'].default_value = 0.0
-        lens.inputs['Dispersion'].default_value = 0.008
-
-        tree.links.new(rl.outputs['Image'],    glare.inputs['Image'])
-        tree.links.new(glare.outputs['Image'], lens.inputs['Image'])
-        tree.links.new(lens.outputs['Image'],  out.inputs['Image'])
-
-    except Exception as e:
-        print(f"[compositor] warning: {e}")
-
-
-def teardown_compositor(scene):
-    try:
-        scene.use_nodes = False
-    except Exception:
-        pass
-
-
-# ── Depth and normals pass materials (EEVEE emission, no compositor needed) ───
 
 def make_depth_material():
     """
@@ -338,7 +299,7 @@ def render_pass(objs_with_mats, pass_mat, cam_obj, out_path, fmt='PNG'):
     orig_fmt         = scene.render.image_settings.file_format
     orig_color_mode  = scene.render.image_settings.color_mode
 
-    teardown_compositor(scene)
+    V.teardown_compositor(scene)
     cam_obj.data.dof.use_dof       = False
     scene.render.engine            = 'BLENDER_EEVEE'
     scene.eevee.taa_render_samples = 1
@@ -362,145 +323,10 @@ def render_pass(objs_with_mats, pass_mat, cam_obj, out_path, fmt='PNG'):
     cam_obj.data.dof.use_dof               = orig_dof
     scene.render.image_settings.file_format = orig_fmt
     scene.render.image_settings.color_mode  = orig_color_mode
-    setup_compositor(scene)
+    V.setup_compositor(scene, _FEAT_FOR_PASSES)
 
 
 # ── Negative fill planes — identical to v20 ───────────────────────────────────
-
-def add_negative_fill_planes(cx, cy, cz, scene_scale):
-    sc  = scene_scale
-    mat = bpy.data.materials.new("NegFill")
-    mat.use_nodes = True
-    bsdf = mat.node_tree.nodes.get('Principled BSDF')
-    if bsdf:
-        bsdf.inputs['Base Color'].default_value = (0, 0, 0, 1)
-        bsdf.inputs['Roughness'].default_value  = 1.0
-
-    def make_plane(loc, rot_euler, name):
-        bpy.ops.mesh.primitive_plane_add(size=sc * 4.0, location=loc)
-        p = bpy.context.object
-        p.rotation_euler = rot_euler
-        p.data.materials.append(mat)
-        p.name = name
-
-    make_plane((cx - sc*2.0, cy + sc*0.2, cz), (0, math.pi/2, 0), "NegFill_Left")
-    make_plane((cx + sc*2.0, cy + sc*0.2, cz), (0, math.pi/2, 0), "NegFill_Right")
-
-
-# ── Material creation — identical to v20 ─────────────────────────────────────
-
-def make_material(seg_name, base_rgb, roughness, ior,
-                  sss_weight, sss_scale_mm, sss_radius,
-                  coat_weight, coat_roughness,
-                  bump_type, bump_scale):
-    mat = bpy.data.materials.new(name=f"{seg_name}_mat")
-    mat.use_nodes = True
-    nodes = mat.node_tree.nodes
-    links = mat.node_tree.links
-    nodes.clear()
-
-    output     = nodes.new('ShaderNodeOutputMaterial')
-    principled = nodes.new('ShaderNodeBsdfPrincipled')
-    principled.inputs['IOR'].default_value = ior
-
-    ao_node = nodes.new('ShaderNodeAmbientOcclusion')
-    ao_node.inputs['Distance'].default_value = 0.0025
-    mix_ao = nodes.new('ShaderNodeMix')
-    mix_ao.data_type  = 'RGBA'
-    mix_ao.blend_type = 'MULTIPLY'
-    mix_ao.inputs['Factor'].default_value = 0.22
-    mix_ao.inputs[6].default_value = (*base_rgb, 1.0)
-    links.new(ao_node.outputs['Color'], mix_ao.inputs[7])
-
-    hsv_node = nodes.new('ShaderNodeHueSaturation')
-    hsv_node.inputs['Saturation'].default_value = 0.95
-    links.new(mix_ao.outputs[2], hsv_node.inputs['Color'])
-
-    uv_node = nodes.new('ShaderNodeTexCoord')
-
-    _vascular = ("liver", "kidney", "spleen", "heart")
-    if any(v in seg_name for v in _vascular):
-        obj_map = nodes.new('ShaderNodeMapping')
-        obj_map.inputs['Scale'].default_value = (1.0, 1.0, 1.0)
-        links.new(uv_node.outputs['Object'], obj_map.inputs['Vector'])
-
-        noise_low = nodes.new('ShaderNodeTexNoise')
-        noise_low.inputs['Scale'].default_value     = 4.0
-        noise_low.inputs['Detail'].default_value    = 2.0
-        noise_low.inputs['Roughness'].default_value = 0.5
-        links.new(obj_map.outputs['Vector'], noise_low.inputs['Vector'])
-
-        map_low = nodes.new('ShaderNodeMapRange')
-        map_low.inputs['From Min'].default_value = 0.0
-        map_low.inputs['From Max'].default_value = 1.0
-        map_low.inputs['To Min'].default_value   = 0.88
-        map_low.inputs['To Max'].default_value   = 1.12
-        links.new(noise_low.outputs['Fac'], map_low.inputs['Value'])
-
-        combine_low = nodes.new('ShaderNodeCombineColor')
-        links.new(map_low.outputs['Result'], combine_low.inputs['Red'])
-        links.new(map_low.outputs['Result'], combine_low.inputs['Green'])
-        links.new(map_low.outputs['Result'], combine_low.inputs['Blue'])
-
-        mix_low = nodes.new('ShaderNodeMix')
-        mix_low.data_type  = 'RGBA'
-        mix_low.blend_type = 'MULTIPLY'
-        mix_low.inputs['Factor'].default_value = 1.0
-        links.new(hsv_node.outputs['Color'],    mix_low.inputs[6])
-        links.new(combine_low.outputs['Color'], mix_low.inputs[7])
-        links.new(mix_low.outputs[2], principled.inputs['Base Color'])
-    else:
-        links.new(hsv_node.outputs['Color'], principled.inputs['Base Color'])
-
-    principled.inputs['Roughness'].default_value = roughness
-
-    _hollow = ("small_bowel", "colon", "duodenum", "stomach", "esophagus")
-    if sss_weight > 0 and not any(h in seg_name for h in _hollow):
-        principled.subsurface_method = 'RANDOM_WALK'
-        principled.inputs['Subsurface Weight'].default_value = sss_weight
-        principled.inputs['Subsurface Scale'].default_value  = sss_scale_mm * 0.001
-        principled.inputs['Subsurface Radius'].default_value = sss_radius
-
-    if coat_weight > 0:
-        principled.inputs['Coat Weight'].default_value    = coat_weight
-        principled.inputs['Coat Roughness'].default_value = coat_roughness
-        principled.inputs['Coat IOR'].default_value       = 1.41
-
-    principled.inputs['Specular IOR Level'].default_value = 0.5
-
-    bevel_node = nodes.new('ShaderNodeBevel')
-    bevel_node.samples = 4
-    bevel_node.inputs['Radius'].default_value = 0.00012
-
-    if bump_type != "none" and bump_scale > 0:
-        bump_path = TEX_DIR / f"bump_{bump_type}.png"
-        if bump_path.exists():
-            map_b = nodes.new('ShaderNodeMapping')
-            map_b.inputs['Scale'].default_value = (3.5, 3.5, 3.5)
-            links.new(uv_node.outputs['UV'], map_b.inputs['Vector'])
-
-            tex_b = nodes.new('ShaderNodeTexImage')
-            tex_b.image = bpy.data.images.load(str(bump_path))
-            tex_b.image.colorspace_settings.name = 'Non-Color'
-            tex_b.extension = 'REPEAT'
-            links.new(map_b.outputs['Vector'], tex_b.inputs['Vector'])
-
-            bump_n = nodes.new('ShaderNodeBump')
-            bump_n.inputs['Strength'].default_value = bump_scale * 1.15
-            bump_n.inputs['Distance'].default_value = 0.00022
-            links.new(bevel_node.outputs['Normal'], bump_n.inputs['Normal'])
-            links.new(tex_b.outputs['Color'],   bump_n.inputs['Height'])
-            links.new(bump_n.outputs['Normal'], principled.inputs['Normal'])
-        else:
-            links.new(bevel_node.outputs['Normal'], principled.inputs['Normal'])
-    else:
-        links.new(bevel_node.outputs['Normal'], principled.inputs['Normal'])
-
-    links.new(principled.outputs['BSDF'], output.inputs['Surface'])
-    return mat
-
-
-# ── Mesh import — identical to v20 ───────────────────────────────────────────
 
 def import_obj(obj_path):
     before = set(bpy.data.objects.keys())
@@ -540,47 +366,6 @@ def organ_bbox_world(objs_with_mats):
 
 # ── Lighting — identical to v20 ───────────────────────────────────────────────
 
-def setup_lights(cx, cy, cz, scene_scale, energy_scale=1.0):
-    # energy_scale ∝ scene_scale² keeps irradiance (energy/distance²) constant as the
-    # rig scales with organ size, so EXPOSURE is the same for tiny and large organ sets.
-    sc = scene_scale
-    es = energy_scale
-
-    bpy.ops.object.light_add(type='AREA',
-        location=(cx + sc*1.4, cy + sc*0.3, cz + sc*0.8))
-    key = bpy.context.object
-    key.name        = "KeyLight"   # named so jitter logic targets only this light
-    key.data.energy = 90 * es
-    key.data.color  = (1.00, 0.98, 0.96)
-    key.data.size   = sc * 0.25
-    key.data.shape  = 'SQUARE'
-    _track_to(key, (cx, cy, cz))
-
-    bpy.ops.object.light_add(type='AREA',
-        location=(cx - sc*1.0, cy - sc*1.0, cz + sc*0.5))
-    fill = bpy.context.object
-    fill.data.energy = 3.0 * es
-    fill.data.color  = (0.96, 0.97, 1.00)
-    fill.data.size   = sc * 0.50
-    _track_to(fill, (cx, cy, cz))
-
-    bpy.ops.object.light_add(type='AREA',
-        location=(cx - sc*0.5, cy + sc*1.4, cz + sc*0.3))
-    rim1 = bpy.context.object
-    rim1.data.energy = 20 * es
-    rim1.data.color  = (1.00, 0.94, 0.88)
-    rim1.data.size   = sc * 0.02
-    _track_to(rim1, (cx, cy, cz))
-
-    bpy.ops.object.light_add(type='AREA',
-        location=(cx + sc*0.4, cy - sc*1.4, cz - sc*0.2))
-    rim2 = bpy.context.object
-    rim2.data.energy = 21 * es
-    rim2.data.color  = (0.95, 0.95, 1.00)
-    rim2.data.size   = sc * 0.08
-    _track_to(rim2, (cx, cy, cz))
-
-
 def _track_to(obj, target_xyz):
     import mathutils
     direction = mathutils.Vector(target_xyz) - mathutils.Vector(obj.location)
@@ -589,74 +374,6 @@ def _track_to(obj, target_xyz):
 
 
 # ── Camera — identical to v20 ────────────────────────────────────────────────
-
-def setup_camera(size, fov_deg=18):
-    if 'Camera' not in bpy.data.objects:
-        bpy.ops.object.camera_add()
-    cam_obj = bpy.context.scene.camera = bpy.data.objects['Camera']
-    cam_obj.data.type      = 'PERSP'
-    cam_obj.data.lens_unit = 'FOV'
-    cam_obj.data.angle     = math.radians(fov_deg)
-    cam_obj.data.clip_start = 0.001
-    cam_obj.data.clip_end   = 100.0
-    cam_obj.data.dof.use_dof        = True
-    cam_obj.data.dof.aperture_fstop = 6.3
-    cam_obj.data.shift_x = 0.0
-    cam_obj.data.shift_y = 0.0
-    return cam_obj
-
-
-def point_camera(cam_obj, position, target):
-    cam_obj.location = position
-    _track_to(cam_obj, target)
-    dist = math.sqrt(sum((a - b)**2 for a, b in zip(position, target)))
-    cam_obj.data.dof.focus_distance = dist * 0.94
-    bpy.context.view_layer.update()
-
-
-# ── Simple (segmentation) render — identical to v20 ──────────────────────────
-
-def setup_simple_material(seg_name, simple_hex):
-    mat = bpy.data.materials.new(name=f"{seg_name}_simple")
-    mat.use_nodes = True
-    nodes = mat.node_tree.nodes
-    links = mat.node_tree.links
-    nodes.clear()
-    output  = nodes.new('ShaderNodeOutputMaterial')
-    diffuse = nodes.new('ShaderNodeBsdfDiffuse')
-    r = int(simple_hex[1:3], 16) / 255.0
-    g = int(simple_hex[3:5], 16) / 255.0
-    b = int(simple_hex[5:7], 16) / 255.0
-    diffuse.inputs['Color'].default_value    = (r, g, b, 1.0)
-    diffuse.inputs['Roughness'].default_value = 0.8
-    links.new(diffuse.outputs['BSDF'], output.inputs['Surface'])
-    return mat
-
-
-def render_simple(objs_with_mats, cam_obj, out_path, size):
-    scene = bpy.context.scene
-    orig_engine = scene.render.engine
-    teardown_compositor(scene)
-    cam_obj.data.dof.use_dof = False
-    scene.render.engine = 'BLENDER_EEVEE'
-    scene.eevee.taa_render_samples = 4
-    for obj, simple_mat, _ in objs_with_mats:
-        obj.data.materials.clear()
-        obj.data.materials.append(simple_mat)
-    scene.render.filepath = str(out_path)
-    bpy.ops.render.render(write_still=True)
-    scene.render.engine = orig_engine
-    cam_obj.data.dof.use_dof = True
-    setup_compositor(scene)  # re-enable glare/CA for the GT render that follows
-
-
-def restore_gt_materials(objs_with_mats):
-    for obj, _, gt_mat in objs_with_mats:
-        obj.data.materials.clear()
-        obj.data.materials.append(gt_mat)
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     args = get_args()
@@ -706,68 +423,99 @@ def main():
     seed_int = int(hashlib.md5(args.subject.encode('utf-8')).hexdigest(), 16) % (2**31)
     rng = np.random.default_rng(seed_int)
 
+    feat = v25_features(args)
     reset_scene()
-    setup_render(args.spp, args.size, args.device)
-    cam_obj = setup_camera(args.size)
-    setup_compositor(bpy.context.scene)
+    setup_render(args, feat)
+    cam_obj = V.setup_camera(args.fstop)
+    V.setup_compositor(bpy.context.scene, feat)
     # NOTE: lights + negative-fill planes are placed AFTER the meshes load, so they
     # can be framed on the organ bounding box rather than the CT volume (see below).
 
     print("\n[1/3] Loading meshes and materials...")
-    objs_with_mats = []
-    tissue_id_map  = {}  # {seg_name: pass_index (1-based)}
-    loaded = 0
-    for row in TISSUES:
-        (seg_name, simple_hex, base_rgb, roughness, ior,
-         sss_weight, sss_scale_mm, sss_radius,
-         coat_weight, coat_roughness,
-         bump_type, bump_scale) = row
 
+    # v25's per-organ appearance table is absolute; --albedo / --sss_scale are global
+    # corrections applied the same way the pair renderer applies them.
+    for _t in V.TISSUES:
+        _t["base"]   = [c * args.albedo for c in _t["base"]]
+        _t["sss_mm"] = _t["sss_mm"] * args.sss_scale
+
+    # PASS 1 — geometry only. Materials cannot be built yet: v25 caps its procedural
+    # noise octaves against the image-plane sampling rate (mm/px), and that depends on
+    # the camera distance, which depends on the organ bounding box, which needs the
+    # meshes loaded. Building materials first would silently use MM_PER_PX = 0 and
+    # disable the Nyquist guard that stops sub-pixel octaves aliasing into moire.
+    loaded_pairs = []          # (blender_obj, tissue_dict)
+    tissue_id_map = {}
+    loaded = 0
+    for t in V.TISSUES:
+        seg_name = t["name"]
         obj_path = mesh_dir / f"{seg_name}_uv.obj"
         if not obj_path.exists():
             obj_path = mesh_dir / f"{seg_name}.obj"
         if not obj_path.exists():
             continue
-
-        blender_obj = import_obj(obj_path)
+        blender_obj = V.import_obj(obj_path)
         if blender_obj is None:
             continue
-
-        simple_mat = setup_simple_material(seg_name, simple_hex)
-        gt_mat     = make_material(seg_name, base_rgb, roughness, ior,
-                                   sss_weight, sss_scale_mm, sss_radius,
-                                   coat_weight, coat_roughness,
-                                   bump_type, bump_scale)
-        blender_obj.data.materials.clear()
-        blender_obj.data.materials.append(gt_mat)
-        blender_obj.pass_index = loaded + 1  # 1-based; 0 = background in segid EXR
-        objs_with_mats.append((blender_obj, simple_mat, gt_mat))
+        if args.smooth > 0:
+            V.destaircase(blender_obj, args.smooth, args.smooth_factor)
+        blender_obj.pass_index = loaded + 1   # 1-based; 0 = background in segid EXR
+        loaded_pairs.append((blender_obj, t))
         tissue_id_map[seg_name] = loaded + 1
         loaded += 1
     print(f"  {loaded} tissues loaded")
 
     # ── Frame the camera/lights on the ORGAN bounding box (not the CT volume) ──
     # The CT-volume framing doesn't transfer across subjects (whole-body scans,
-    # off-centre / sparse organ sets → tiny or clipped shots). Deriving the orbit
+    # off-centre / sparse organ sets -> tiny or clipped shots). Deriving the orbit
     # centre + radius + scale from the actual loaded meshes makes framing consistent
     # for every subject. Falls back to the CT estimate if nothing loaded.
     if loaded > 0:
-        (cx, cy, cz), radius, extent = organ_bbox_world(objs_with_mats)
+        (cx, cy, cz), radius, extent = organ_bbox_world(
+            [(o, None, None) for o, _ in loaded_pairs])
         scene_scale = float(extent)
         print(f"  organ bbox: center=({cx:.3f},{cy:.3f},{cz:.3f}) "
               f"sphere_r={radius:.3f} extent={extent:.3f}")
     else:
         print("  [warn] no meshes loaded — falling back to CT-volume framing")
 
+    # Sampling rate at the subject, from the real camera geometry. v25's _safe_detail
+    # reads this global to cap octaves so none lands below ~2 px.
+    orbit_dist = radius / math.sin(0.5 * args.fill * math.radians(20.0))
+    _frame_m = 2.0 * orbit_dist * math.tan(math.radians(20.0) / 2.0)
+    V.MM_PER_PX = (_frame_m * 1000.0) / float(args.size)
+    print(f"  sampling  : {V.MM_PER_PX:.3f} mm/px "
+          f"(frame {_frame_m*100:.1f} cm at {args.size} px)")
+
+    # PASS 2 — materials, now that MM_PER_PX is known.
+    objs_with_mats = []
+    n_tex = 0
+    for blender_obj, t in loaded_pairs:
+        simple_mat = V.setup_simple_material(t["name"], t["hex"])
+        gt_mat     = V.make_material(t, feat)
+        blender_obj.data.materials.clear()
+        blender_obj.data.materials.append(gt_mat)
+        objs_with_mats.append((blender_obj, simple_mat, gt_mat))
+        if "albedo" in V.tissue_textures(t["name"], args.tex_dir):
+            n_tex += 1
+    print(f"  {n_tex}/{loaded} organs using synthesised textures from {args.tex_dir}")
+    if n_tex == 0:
+        print("  [warn] NO textures found — run scripts/synth_tissue_textures.py first, "
+              "or the dataset falls back to procedural shading and will not match v25")
+
     # Lights: proportional rig at organ scale, energy-compensated so EXPOSURE is
     # constant regardless of organ size (irradiance held fixed). Tune with --light-ref.
-    energy_scale = (scene_scale / max(args.light_ref, 1e-6)) ** 2
-    setup_lights(cx, cy, cz, scene_scale, energy_scale)
+    # v25's rig: same three-point geometry, but a much stronger fill and an added
+    # warm cavity bounce. That soft wraparound is what reads as translucency in the
+    # reference renders — a backlit test showed liver is opaque at any plausible SSS
+    # radius, so the effect is lighting, not subsurface transport.
+    V.setup_lights(cx, cy, cz, scene_scale, feat, 90.0)
+    V.setup_world(bpy.context.scene, feat)
     # Negative-fill planes MUST sit outside the camera orbit, else they occlude the
     # organs at some azimuths (the "fully black" views). Frame them on the orbit radius
     # (max camera distance, at the widest FOV), not the small organ scale.
-    orbit_dist = radius / math.sin(0.5 * args.fill * math.radians(20.0))
-    add_negative_fill_planes(cx, cy, cz, orbit_dist)
+    if args.walls:
+        V.add_fill_planes(cx, cy, cz, scene_scale, feat, cam_radius=orbit_dist)
 
     # Cache baseline light properties — per-view jitter is applied relative to these
     # so accumulated drift across views doesn't happen.
@@ -809,7 +557,11 @@ def main():
             l_obj.data.color[0] = props['color'][0] * r_scale
             l_obj.data.color[1] = props['color'][1] * g_scale
             l_obj.data.color[2] = props['color'][2]
-    bpy.context.scene.view_settings.exposure = subj_exposure
+    # Jitter is RELATIVE to the base exposure. Assigning subj_exposure alone was
+    # harmless while the base was 0.0, but v25 renders at -1.0 EV — overwriting it
+    # here would silently discard that and produce a dataset ~1 stop brighter than
+    # every preview we tuned against.
+    bpy.context.scene.view_settings.exposure = args.exposure + subj_exposure
 
     for az_nom in azimuths:
         for el_nom in elevations:
@@ -853,7 +605,7 @@ def main():
             print(f"\n--- View [{view_id:02d}/{n_views}] {label} "
                   f"(az_actual={az_j:.1f}° el_actual={el_j:.1f}°) ---")
 
-            point_camera(cam_obj, cam_pos, target_pos)
+            V.point_camera(cam_obj, cam_pos, target_pos)
             cam_obj.data.angle = math.radians(fov_j)
             cam_dist = float(math.sqrt(sum((a - b)**2 for a, b in zip(cam_pos, target_pos))))
 
@@ -889,8 +641,8 @@ def main():
 
             # --- Render seg (EEVEE) → seg.png ---
             seg_path = view_dir / "seg.png"
-            render_simple(objs_with_mats, cam_obj, seg_path, args.size)
-            restore_gt_materials(objs_with_mats)
+            V.render_simple(objs_with_mats, cam_obj, seg_path, feat)
+            V.restore_gt_materials(objs_with_mats)
             print(f"  seg   → {seg_path}")
 
             # --- Render GT (Cycles) → render.exr (MULTILAYER) + rgb_preview.png ---
@@ -940,7 +692,7 @@ def main():
             render_pass(objs_with_mats, make_depth_material(),   cam_obj, view_dir / "depth.exr",   fmt='OPEN_EXR')
             render_pass(objs_with_mats, make_normals_material(), cam_obj, view_dir / "normals.exr", fmt='OPEN_EXR')
             render_pass(objs_with_mats, make_segid_material(),   cam_obj, view_dir / "segid.exr",   fmt='OPEN_EXR')
-            restore_gt_materials(objs_with_mats)
+            V.restore_gt_materials(objs_with_mats)
             print(f"  gbuffers → depth.exr normals.exr segid.exr")
 
             # Restore PNG as the default format so the seg render on the next view works.
