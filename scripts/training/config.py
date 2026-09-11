@@ -65,9 +65,16 @@ class DataConfig:
     # A CNN has a strong low-frequency bias, so a raw coordinate ramp is a poor basis
     # for a fine, near-periodic texture; sin/cos at several wavelengths is the standard
     # remedy (positional encoding) and suits BOX-projected *tileable* textures, which
-    # are literally periodic in object space. Bands run 256/64/16/4 mm — see
-    # POSITION_BASE_LAMBDA_MM. 0 = raw XYZ only (cheapest, 3 ch).
-    position_bands: int = 4
+    # are literally periodic in object space. Bands run POSITION_BASE_LAMBDA_MM / 4**k,
+    # i.e. 256 / 64 / 16 mm. 0 = raw XYZ only (cheapest, 3 ch).
+    #
+    # Why 3 and not 4: depth.exr was written as HALF float (Blender ignored
+    # color_depth='32'), so Z is quantised to ~1.95 mm at a ~2 m camera distance and the
+    # unprojected coordinate inherits that step. A 4 mm band would then get ~2 samples
+    # per cycle — at Nyquist, encoding quantisation noise rather than position. 16 mm
+    # gives ~8 samples per cycle and is safe. dataset.py measures the real step and
+    # refuses an aliased setting. Same reasoning as v25's _safe_detail octave cap.
+    position_bands: int = 3
 
     # Ground-truth target. See README "Target choice".
     #   preview_png : rgb_preview.png — AgX + fog-glow + chromatic aberration baked in (EXACT, default).

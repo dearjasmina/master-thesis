@@ -165,6 +165,29 @@ class PairedRenderDataset(Dataset):
         if not self.samples:
             raise RuntimeError(f"split '{split}' has 0 samples")
 
+        # `position` is only as precise as depth.exr, and these passes were written as
+        # HALF floats (Blender ignored color_depth='32'), quantising Z to ~2 mm at a 2 m
+        # camera distance. A Fourier band shorter than a few times that step samples
+        # below Nyquist and encodes quantisation noise instead of a coordinate — so
+        # measure the real step and refuse an aliased setting before spending GPU days.
+        if "position" in self.dcfg.input_buffers and self.dcfg.position_bands > 0:
+            z = read_render_exr(str(self.samples[0]["dir"] / "depth.exr"),
+                                want=("image",))["image"][..., 0]
+            zf = z[z > 0.5 * z.max()]                  # drop the ~1e-3 background
+            steps = np.diff(np.unique(zf))
+            step_mm = float(np.median(steps)) * 1000.0 if steps.size else 0.0
+            fine_mm = POSITION_BASE_LAMBDA_MM / (4.0 ** (self.dcfg.position_bands - 1))
+            per_cycle = fine_mm / max(step_mm, 1e-6)
+            print(f"[data] position: depth step ~{step_mm:.2f} mm, finest band "
+                  f"{fine_mm:.0f} mm → {per_cycle:.1f} samples/cycle")
+            if per_cycle < 3.0:
+                raise ValueError(
+                    f"position_bands={self.dcfg.position_bands} puts the finest band at "
+                    f"{fine_mm:.0f} mm — only {per_cycle:.1f} samples per cycle against a "
+                    f"{step_mm:.2f} mm depth quantisation. That encodes quantisation "
+                    f"noise, not position. Use --position-bands "
+                    f"{max(0, self.dcfg.position_bands - 1)} or fewer.")
+
     def __len__(self):
         return len(self.samples)
 

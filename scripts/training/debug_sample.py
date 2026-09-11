@@ -77,8 +77,14 @@ def main():
             sub = x[a:bb]
             print(f"  {b:<8} ch[{a}:{bb}]  min={sub.min():+.3f} max={sub.max():+.3f} "
                   f"mean={sub.mean():+.3f}  {'DEGENERATE?' if sub.max()-sub.min() < 1e-3 else ''}")
-            img = sub[0] if sub.shape[0] == 1 else sub.transpose(1, 2, 0)
+            # PIL only takes 1 or 3 channels, and `position` is 3 + 6*bands wide, so
+            # dump it as triplets: the raw XYZ coordinate first, then one PNG per
+            # sin/cos band pair — otherwise this crashes on anything wider than RGB.
+            img = sub[0] if sub.shape[0] == 1 else sub[:3].transpose(1, 2, 0)
             chan_to_png(img).save(out / f"{i}_{tag}_{b}.png")
+            for k in range(3, sub.shape[0] - 2, 3):
+                chan_to_png(sub[k:k + 3].transpose(1, 2, 0)).save(
+                    out / f"{i}_{tag}_{b}_ch{k:02d}.png")
         print(f"  target   min={y.min():+.3f} max={y.max():+.3f} mean={y.mean():+.3f}")
         chan_to_png(y.transpose(1, 2, 0)).save(out / f"{i}_{tag}_TARGET.png")
 
