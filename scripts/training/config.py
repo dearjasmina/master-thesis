@@ -24,9 +24,30 @@ import json
 #   depth   : metric Z from render.exr, normalised        — geometry            (1 ch)
 #   normals : surface normals from render.exr             — geometry            (3 ch)
 #   segid   : per-organ pass_index from render.exr        — organ identity      (1 ch)
-ALL_INPUT_BUFFERS = ["seg_rgb", "depth", "normals", "segid"]
+#   position: object-space XYZ, unprojected from depth    — texture coordinate  (3 + 6*bands ch)
+#
+# Why `position` exists. v25 samples every organ texture through
+# ShaderNodeTexCoord's *Object* output in BOX projection, so in the ground truth the
+# vessel/mottle pattern at a pixel is a deterministic function of the 3D object-space
+# point. seg_rgb and segid give identity, normals give orientation, depth gives
+# distance — but recovering the 3D point additionally needs the camera pose, which was
+# never an input. The network was therefore asked to predict a function of a variable
+# it cannot observe, and its best answer is the average over all consistent positions:
+# a smooth, texture-free surface. That is exactly the artefact seen in the renders.
+# `position` closes the gap, and needs no re-rendering — meta.json already stores K and
+# cam_to_world. See dataset.py::_load_position.
+ALL_INPUT_BUFFERS = ["seg_rgb", "depth", "normals", "segid", "position"]
 
-INPUT_CHANNELS = {"seg_rgb": 3, "depth": 1, "normals": 3, "segid": 1}
+INPUT_CHANNELS = {"seg_rgb": 3, "depth": 1, "normals": 3, "segid": 1, "position": 3}
+
+
+def position_channels(bands: int) -> int:
+    """Raw XYZ plus sin/cos Fourier bands (2 fns * 3 axes per band)."""
+    return 3 + 6 * int(bands)
+
+
+def buffer_channels(name: str, position_bands: int = 0) -> int:
+    return position_channels(position_bands) if name == "position" else INPUT_CHANNELS[name]
 
 
 @dataclass
@@ -39,6 +60,14 @@ class DataConfig:
     # Default = full G-buffer stack (3rd.md PRIMARY). Set to ["seg_rgb"] for an
     # RGB-only Stage-0 ablation.
     input_buffers: List[str] = field(default_factory=lambda: ["seg_rgb", "depth", "normals", "segid"])
+
+    # Fourier bands added to the `position` buffer (ignored unless it is used).
+    # A CNN has a strong low-frequency bias, so a raw coordinate ramp is a poor basis
+    # for a fine, near-periodic texture; sin/cos at several wavelengths is the standard
+    # remedy (positional encoding) and suits BOX-projected *tileable* textures, which
+    # are literally periodic in object space. Bands run 256/64/16/4 mm — see
+    # POSITION_BASE_LAMBDA_MM. 0 = raw XYZ only (cheapest, 3 ch).
+    position_bands: int = 4
 
     # Ground-truth target. See README "Target choice".
     #   preview_png : rgb_preview.png — AgX + fog-glow + chromatic aberration baked in (EXACT, default).
@@ -112,6 +141,12 @@ class ModelConfig:
 class LossConfig:
     # 3rd.md weights: L1 anchors fidelity (no hallucination); VGG/LPIPS restores
     # texture; FM stabilises; small PatchGAN adds sharpness only.
+    #
+    # NOTE on texture: for detail the network cannot predict from its inputs, L1 is
+    # minimised by emitting the conditional mean — i.e. a smooth surface — and only the
+    # GAN term pushes back, here at 1 against L1's 10. pix2pixHD as published uses NO
+    # L1 at all and weights VGG at 10. If organ texture comes out smooth, this 10:1
+    # tilt toward smoothing is the first thing to change (--w-l1 1 --w-vgg 10).
     w_l1: float = 10.0
     w_vgg: float = 1.0         # VGG19 perceptual
     w_lpips: float = 0.0       # optional LPIPS (lpips pkg). 0 = off; set >0 to add.
@@ -155,15 +190,18 @@ class Config:
     train: TrainConfig = field(default_factory=TrainConfig)
 
     def input_nc(self) -> int:
-        return sum(INPUT_CHANNELS[b] for b in self.data.input_buffers)
+        return sum(buffer_channels(b, self.data.position_bands)
+                   for b in self.data.input_buffers)
 
     def to_json(self, path: str) -> None:
         with open(path, "w") as f:
             json.dump(asdict(self), f, indent=2)
 
     def summary(self) -> str:
+        pos = (f" pos_bands={self.data.position_bands}"
+               if "position" in self.data.input_buffers else "")
         return (f"netG={self.model.netG} ngf={self.model.ngf} | "
-                f"in={self.data.input_buffers}({self.input_nc()}ch) → out={self.model.output_nc}ch | "
+                f"in={self.data.input_buffers}({self.input_nc()}ch){pos} → out={self.model.output_nc}ch | "
                 f"target={self.data.target} normals={self.data.normals_space} | "
                 f"size={self.data.size} | losses L1={self.loss.w_l1} VGG={self.loss.w_vgg} "
                 f"LPIPS={self.loss.w_lpips} FM={self.loss.w_fm} GAN={self.loss.w_gan} "
@@ -175,7 +213,7 @@ class Config:
 # evaluate.py, infer.py and eval_common.py used to hardcode this separately, so adding
 # a preset made config.preset() accept it while the CLIs still rejected it — which is
 # exactly how rgb_1024 failed after being added correctly.
-PRESET_NAMES = ("proto512", "full1024", "rgb_1024", "rgb_only", "overfit")
+PRESET_NAMES = ("proto512", "full1024", "rgb_1024", "gbuf_pos1024", "rgb_only", "overfit")
 
 
 def preset(name: str) -> Config:
@@ -227,6 +265,15 @@ def preset(name: str) -> Config:
         c.data.input_buffers = ["seg_rgb"]
         c.train.output_dir = "results/training_runs/rgb_baseline"
         return c
+    if name == "gbuf_pos1024":
+        # full1024 PLUS the object-space position buffer — one change against full1024,
+        # so a paired comparison isolates what the texture coordinate is worth.
+        # Needs no dataset regeneration (position is unprojected from depth.exr using
+        # meta.json's K / cam_to_world). See ALL_INPUT_BUFFERS above for the rationale.
+        c = preset("full1024")
+        c.data.input_buffers = ["seg_rgb", "depth", "normals", "segid", "position"]
+        c.train.output_dir = "results/training_runs/gbuf_pos1024"
+        return c
     if name == "overfit":
         # Step-1 sanity: memorise a handful of subjects (pass --subjects / --max-subjects).
         # Small + fast + frequent samples; if this won't drive L1→~0 and fake→GT,
@@ -243,4 +290,4 @@ def preset(name: str) -> Config:
         c.train.output_dir = "results/training_runs/overfit"
         return c
     raise ValueError(f"unknown preset '{name}' "
-                     f"(choose: proto512, full1024, rgb_1024, rgb_only, overfit)")
+                     f"(choose: {', '.join(PRESET_NAMES)})")

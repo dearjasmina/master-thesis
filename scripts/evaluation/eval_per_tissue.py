@@ -42,17 +42,22 @@ _TRAIN_DIR = Path(__file__).resolve().parents[1] / "training"
 if str(_TRAIN_DIR) not in sys.path:
     sys.path.insert(0, str(_TRAIN_DIR))
 from exr import read_render_exr        # noqa: E402
+from dataset import CANONICAL_TISSUES  # noqa: E402
 
 
-def load_tissue_ids(data_root):
-    """tissue_ids.json maps organ name -> pass_index, written by the generator."""
-    for c in (Path(data_root) / "tissue_ids.json",
-              Path(data_root).parent / "tissue_ids.json"):
-        if c.exists():
-            d = json.loads(c.read_text())
-            ids = d.get("tissues", d)
-            return {int(v): k for k, v in ids.items()}, c
-    return None, None
+def to_global_ids(idx_map, ds, subject):
+    """Per-subject pass_index -> fixed global organ id (0 = background), or None.
+
+    The generator numbers organs by load order among the organs PRESENT in that
+    subject, so one missing organ shifts every later one: raw id 13 is the heart in a
+    complete subject but the esophagus or liver in one missing a lung lobe. Only ~20%
+    of subjects have all 29 organs, so grouping raw ids across subjects mixes organs.
+    This reuses the exact per-subject remap the network was trained with (dataset.py).
+    """
+    lut = ds._segid_lut.get(subject)
+    if lut is None or len(lut) <= 1:          # no tissue_ids.json for this subject
+        return None
+    return lut[np.clip(idx_map, 0, len(lut) - 1)].astype(np.int32)
 
 
 def load_indexob(view_dir):
@@ -100,12 +105,8 @@ def main():
     G = load_generator(cfg, args.checkpoint, device)
     ds = open_dataset(cfg, args.split)
 
-    id2name, src = load_tissue_ids(cfg.data.root)
-    if id2name is None:
-        print("  [warn] tissue_ids.json not found — organs will be reported by numeric id")
-        id2name = {}
-    else:
-        print(f"  tissue ids: {len(id2name)} organs from {src}")
+    print(f"  tissue ids: per-subject tissue_ids.json -> {len(CANONICAL_TISSUES)} "
+          f"global organs (same remap as training)")
 
     lp = None
     if args.lpips:
@@ -114,18 +115,23 @@ def main():
 
     idxs = sample_indices(len(ds), args.max_samples)
     rows = []
+    no_ids = set()
     with torch.no_grad():
         for n, i in enumerate(idxs):
             vd = view_dir_of(ds, i)
+            subject = Path(vd).parent.name
             idx_map = load_indexob(vd)
             if idx_map is None:
+                continue
+            idx_map = to_global_ids(idx_map, ds, subject)
+            if idx_map is None:
+                no_ids.add(subject)
                 continue
             b = ds[i]
             fake = to01(G(b["input"].unsqueeze(0).to(device))[0])
             real = to01(b["target"])
             if idx_map.shape != fake.shape[:2]:
                 continue
-            subject = Path(vd).parent.name
             for tid in np.unique(idx_map):
                 if tid <= 0:                       # 0 is background
                     continue
@@ -135,7 +141,7 @@ def main():
                     continue
                 r = {"subject": subject, "view": Path(vd).name,
                      "tissue_id": int(tid),
-                     "tissue": id2name.get(int(tid), f"id_{int(tid)}"),
+                     "tissue": CANONICAL_TISSUES[int(tid) - 1],
                      "pixel_frac": round(frac, 5),
                      "psnr": masked_psnr(real, fake, m),
                      "l1": masked_l1(real, fake, m)}
@@ -151,6 +157,9 @@ def main():
             if n % 25 == 0:
                 print(f"    {n}/{len(idxs)}", end="\r", flush=True)
 
+    if no_ids:
+        print(f"\n  [warn] skipped {len(no_ids)} subject(s) with no tissue_ids.json: "
+              f"{sorted(no_ids)[:5]}{' ...' if len(no_ids) > 5 else ''}")
     if not rows:
         raise SystemExit("\nno per-tissue rows — is the IndexOB/segid pass present?")
 

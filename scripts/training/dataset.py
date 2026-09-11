@@ -30,10 +30,16 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from config import buffer_channels
 from exr import read_render_exr
 from splits import assign_splits
 
 cv2.setNumThreads(0)  # avoid oversubscription with DataLoader workers
+
+# Wavelength of the first Fourier band on the `position` buffer; band k uses
+# this / 4**k, i.e. 256 / 64 / 16 / 4 mm — bracketing whole-organ lobulation down to
+# the vessel calibres measured from HiP-CT (0.2-1.5 mm).
+POSITION_BASE_LAMBDA_MM = 256.0
 
 # Canonical organ → fixed global ID (1-based), matching the TISSUES order in
 # generate_training_dataset.py. The render stores per-subject pass_index (assigned by
@@ -198,6 +204,54 @@ class PairedRenderDataset(Dataset):
         gid = gid / float(NUM_CANONICAL)                        # consistent across subjects
         return np.clip(gid, 0.0, 1.0)[..., None] * 2.0 - 1.0
 
+    def _load_position(self, d: Path, meta) -> np.ndarray:
+        """Object-space XYZ per pixel, unprojected from depth.exr via meta.json.
+
+        v25 samples every organ texture through ShaderNodeTexCoord's *Object* output in
+        BOX projection, so the GT vessel/mottle pattern at a pixel is a deterministic
+        function of this coordinate — and nothing in {seg_rgb, depth, normals, segid}
+        determines it, because recovering the 3D point needs the camera pose. Supplying
+        it is what makes the texture predictable rather than an average over positions.
+
+        Meshes are imported with global_scale=0.001 and no other transform, so
+        object-space mm == world metres * 1000. Verified on s0050: the reconstruction
+        lands at 118..348 mm against the known local vertex range 155..340, and every
+        foreground point falls inside the organ bounding sphere (p99 0.303 m vs r 0.331).
+
+        depth.exr holds Blender's 'View Z Depth' — PLANAR distance along the camera's
+        -Z axis, NOT distance along the ray. The ray convention warps the result by up
+        to 4% at the frame corners (~12 mm here, an order of magnitude more than a
+        vessel diameter); measured against the stored normals, planar is the better fit.
+
+        No per-subject offset is subtracted: the texture is a fixed function of the
+        ABSOLUTE object coordinate, so re-centring per subject would make the same input
+        coordinate mean different things in different subjects and destroy exactly the
+        determinism this buffer exists to create.
+        """
+        Z = read_render_exr(str(d / "depth.exr"), want=("image",))["image"][..., 0].astype(np.float32)
+        K = np.asarray(meta["K"], dtype=np.float32)
+        c2w = np.asarray(meta["cam_to_world"], dtype=np.float32)
+        H, W = Z.shape
+        u, v = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+        # Blender camera: +X right, +Y up, looking down -Z; image row 0 is the top.
+        cam = np.stack([(u - K[0, 2]) / K[0, 0] * Z,
+                        -(v - K[1, 2]) / K[1, 1] * Z,
+                        -Z], axis=-1)
+        world = cam @ c2w[:3, :3].T + c2w[:3, 3]
+
+        # These EEVEE emission passes leave the background near 1e-3, NOT 0, so a ">0"
+        # test would admit the whole background and unproject it onto the camera.
+        cam_dist, radius = float(meta.get("camera_distance", 0.0)), float(meta.get("radius", 0.0))
+        fg = (Z > (0.5 * (cam_dist - radius) if cam_dist > 0 else 0.5))[..., None]
+
+        planes = [np.clip(world, -2.0, 2.0)]            # metres, absolute scale kept
+        mm = world * 1000.0
+        for k in range(int(self.dcfg.position_bands)):
+            w = 2.0 * np.pi / (POSITION_BASE_LAMBDA_MM / (4.0 ** k))
+            planes.append(np.sin(mm * w))
+            planes.append(np.cos(mm * w))
+        return (np.concatenate(planes, axis=-1) * fg).astype(np.float32)
+
     def _load_target(self, d: Path, exr) -> np.ndarray:
         t = self.dcfg.target
         if t == "preview_png":
@@ -229,6 +283,7 @@ class PairedRenderDataset(Dataset):
             elif b == "depth":  planes.append(self._load_depth(d, meta))
             elif b == "normals":planes.append(self._load_normals(d, meta))
             elif b == "segid":  planes.append(self._load_segid(d))
+            elif b == "position": planes.append(self._load_position(d, meta))
             else: raise ValueError(f"unknown input buffer '{b}'")
         target = self._load_target(d, exr)
 
@@ -239,11 +294,17 @@ class PairedRenderDataset(Dataset):
         x = np.concatenate(planes, axis=-1) if planes else np.zeros((size, size, 0), np.float32)
 
         # Minimal augmentation: opt-in hflip, only sound for camera-space normals.
+        # It is never sound with `position`: mirroring the image does not mirror the
+        # object-space coordinate, so the flipped pixels would carry the coordinate of
+        # the point on the OTHER side of the organ. Fail loudly rather than train on it.
+        if self.dcfg.hflip and "position" in bufs:
+            raise ValueError("hflip is invalid with the 'position' buffer — mirroring "
+                             "the image does not mirror the 3D coordinate it encodes")
         if self.split == "train" and self.dcfg.hflip and np.random.rand() < 0.5:
             x = x[:, ::-1, :].copy()
             target = target[:, ::-1, :].copy()
             if self.dcfg.normals_space == "camera" and "normals" in bufs:
-                off = sum({"seg_rgb": 3, "depth": 1, "normals": 3, "segid": 1}[b]
+                off = sum(buffer_channels(b, self.dcfg.position_bands)
                           for b in bufs[:bufs.index("normals")])
                 x[:, :, off] *= -1.0   # negate camera-space normal X
 

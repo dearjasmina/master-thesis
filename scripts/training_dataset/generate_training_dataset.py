@@ -8,7 +8,7 @@ Output per sample:
   render.exr     Multi-pass EXR — 11 passes scene-linear (Image, Depth, Normal,
                  IndexOB, DiffDir, DiffInd, DiffCol, GlossDir, GlossInd,
                  VolumeDir, VolumeInd)
-  rgb_preview.png AgX tone-mapped PNG — human inspection only, do not train on
+  rgb_preview.png AgX tone-mapped PNG — default training target (config.py: target="preview_png")
   seg.png        flat semantic segmentation (EEVEE, colour-coded by tissue)
   meta.json      camera K + extrinsics, ray fields, subject photometric constants
 

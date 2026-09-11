@@ -28,7 +28,7 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import preset, INPUT_CHANNELS
+from config import preset, buffer_channels
 from dataset import PairedRenderDataset
 
 
@@ -64,7 +64,8 @@ def main():
     # channel offsets per buffer (to slice the stacked input tensor)
     offsets, o = {}, 0
     for b in cfg.data.input_buffers:
-        offsets[b] = (o, o + INPUT_CHANNELS[b]); o += INPUT_CHANNELS[b]
+        n = buffer_channels(b, cfg.data.position_bands)   # 'position' widens with bands
+        offsets[b] = (o, o + n); o += n
 
     for i in range(min(args.n, len(ds))):
         s = ds[i]

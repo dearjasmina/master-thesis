@@ -48,6 +48,10 @@ def add_common_args(ap):
     ap.add_argument("--target", default=None,
                     choices=["preview_png", "exr_agx", "exr_linear"])
     ap.add_argument("--input-buffers", default=None)
+    ap.add_argument("--position-bands", type=int, default=None,
+                    help="Fourier bands on the 'position' buffer. MUST match the value "
+                         "used in training, or the generator's input channel count "
+                         "differs from the checkpoint's and loading fails.")
     ap.add_argument("--split", default="test")
     ap.add_argument("--max-samples", type=int, default=0, help="0 = all")
     ap.add_argument("--out", default="EVALUATION/suite",
@@ -65,6 +69,8 @@ def build_cfg(args):
     if args.input_buffers:
         cfg.data.input_buffers = [b.strip() for b in args.input_buffers.split(",")
                                   if b.strip()]
+    if args.position_bands is not None:
+        cfg.data.position_bands = args.position_bands
     return cfg
 
 
