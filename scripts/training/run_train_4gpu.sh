@@ -10,7 +10,14 @@
 #   bash scripts/training/run_train_4gpu.sh rgb_1024 --epochs 60
 #   bash scripts/training/run_train_4gpu.sh full1024 --resume results/.../latest.pt
 #
-# Uses the project venv. Appends to results/training_runs/<preset>/train.log
+# Output goes to results/training_runs/<preset> — NOT the preset's own output_dir, which
+# this launcher overrides. Set OUT to put the run somewhere else; checkpoints, samples and
+# train.log then all land there together:
+#   OUT=results/training_runs/rgb_baseline_v2 bash scripts/training/run_train_4gpu.sh rgb_1024
+# (Do not pass --output-dir as an extra arg instead: train.py would honour it, but train.log
+# would still be written to the default folder.)
+#
+# Uses the project venv. Appends to $OUT/train.log
 # (append, not overwrite, so a --resume does not erase the earlier loss history).
 
 set -euo pipefail
@@ -21,7 +28,7 @@ DATASET="${DATASET:-data/training_dataset}"
 GPUS="${GPUS:-4}"
 PY="${PY:-venv/bin/python}"
 
-OUT="results/training_runs/${PRESET}"
+OUT="${OUT:-results/training_runs/${PRESET}}"
 mkdir -p "$OUT"
 
 echo "========================================================"
