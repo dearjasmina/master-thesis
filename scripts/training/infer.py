@@ -34,7 +34,8 @@ from config import preset, PRESET_NAMES
 from networks import define_G
 from exr import read_render_exr
 from dataset import ORGAN_TO_GID, NUM_CANONICAL, CANONICAL_TISSUES, _resize, unproject_position
-from texture_lookup import TextureBank, texture_buffer
+from texture_lookup import TextureBank, texture_buffer, tex_class, box_weights, box_project
+import glint_model
 
 _BANKS = {}
 
@@ -86,6 +87,9 @@ def load_input(view_dir: Path, cfg, lut: np.ndarray) -> np.ndarray:
         elif b == "texture":
             # Same function the dataloader calls — train and inference cannot diverge.
             planes.append(texture_buffer(view_dir, meta, lut, CANONICAL_TISSUES, _bank(cfg)))
+        elif b == "glint":
+            planes.append(glint_model.glint_buffer(view_dir, meta, lut, CANONICAL_TISSUES, _bank(cfg),
+                                                   tex_class, box_weights, box_project))
         else:
             raise ValueError(f"unknown input buffer '{b}'")
     planes = [_resize(p, cfg.data.size) for p in planes]

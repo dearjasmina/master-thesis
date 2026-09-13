@@ -226,20 +226,35 @@ def cmd_check(args):
         results["A2"] = False
         print(f"A2 geometry       FAIL  {type(e).__name__}: {e}")
 
-    # A3 dataloader == texture_lookup == infer
+    # A3 dataloader == the shared buffer functions == infer, for every derived buffer
     import infer as I
-    cfg = preset("preflight_tex"); cfg.data.root = str(root); cfg.data.subjects = [subj]
+    import glint_model as gm
+    from config import buffer_channels
+    from texture_lookup import box_weights
+    cfg = preset(args.preset); cfg.data.root = str(root); cfg.data.subjects = [subj]
     cfg.data.tex_dir = args.tex_dir
     ds = PairedRenderDataset(cfg, split="train")
     i = next(k for k, s in enumerate(ds.samples) if s["dir"].name == vd.name)
     t0 = time.time(); x = ds[i]["input"].numpy(); t_load = time.time() - t0
-    direct = texture_buffer(vd, V["meta"], I.build_segid_lut(vd.parent), CANONICAL_TISSUES, bank)
-    xi = I.load_input(vd, cfg, I.build_segid_lut(vd.parent))
-    d_direct = float(np.abs(x[8:15] - direct.transpose(2, 0, 1)).max())
-    d_infer = float(np.abs(xi.transpose(2, 0, 1) - x).max())
-    results["A3"] = x.shape == (15, 1024, 1024) and d_direct < 1e-5 and d_infer < 1e-5
-    print(f"A3 buffer path    {ok(results['A3'])}  input {x.shape}; |dataloader-texture_buffer| {d_direct:.1e}; "
-          f"|dataloader-infer| {d_infer:.1e}")
+    lut = I.build_segid_lut(vd.parent)
+    offs, o = {}, 0
+    for b in cfg.data.input_buffers:
+        n = buffer_channels(b, cfg.data.position_bands); offs[b] = (o, o + n); o += n
+    diffs = {}
+    if "texture" in offs:
+        a, e = offs["texture"]
+        diffs["texture"] = float(np.abs(x[a:e] - texture_buffer(vd, V["meta"], lut, CANONICAL_TISSUES, bank)
+                                        .transpose(2, 0, 1)).max())
+    if "glint" in offs:
+        a, e = offs["glint"]
+        diffs["glint"] = float(np.abs(x[a:e] - gm.glint_buffer(vd, V["meta"], lut, CANONICAL_TISSUES, bank, tex_class,
+                                                               box_weights, box_project).transpose(2, 0, 1)).max())
+    d_infer = float(np.abs(I.load_input(vd, cfg, lut).transpose(2, 0, 1) - x).max())
+    results["A3"] = (x.shape == (cfg.input_nc(), 1024, 1024) and all(d < 1e-5 for d in diffs.values())
+                     and d_infer < 1e-5)
+    print(f"A3 buffer path    {ok(results['A3'])}  [{args.preset}] input {x.shape}; "
+          + "; ".join(f"|dataloader-{k}_buffer| {d:.1e}" for k, d in diffs.items())
+          + f"; |dataloader-infer| {d_infer:.1e}")
 
     # A4 the buffer carries a registered texture signal (oracle statistic, subject-wide)
     c_sig, c_null = TL.Corr(), TL.Corr()
@@ -263,16 +278,39 @@ def cmd_check(args):
     for k in range(min(3, len(ds))):
         ds[k]
     per = (time.time() - t0) / min(3, len(ds))
-    results["A5"] = per < 3.0
+    results["A5"] = per < 4.0
+    nw = cfg.data.num_workers
     print(f"A5 loader speed   {ok(results['A5'])}  {per*1000:.0f} ms/sample (first {t_load*1000:.0f} ms); "
-          f"with 4 workers ~{4/per:.1f} samples/s")
+          f"with {nw} workers ~{nw/per:.1f} samples/s")
+
+    # A7 the glint buffer carries the texture-locked vessel-glint signal — measured on the
+    # buffer the network will actually receive, against its own half-tile null.
+    if "glint" in cfg.data.input_buffers:
+        c7 = defaultdict(TL.Corr)
+        for v in views[: args.a4_views]:
+            W_ = view_data(v, bank)
+            lut_v = I.build_segid_lut(v.parent)
+            gb = gm.glint_buffer(v, W_["meta"], lut_v, CANONICAL_TISSUES, bank, tex_class, box_weights, box_project)
+            gn = gm.glint_buffer(v, W_["meta"], lut_v, CANONICAL_TISSUES, bank, tex_class, box_weights, box_project,
+                                 tex_shift_mm=bank.tex_mm / 2)
+            Y = TL.lum(W_["gt"])
+            for _, _, m, ev in organ_masks(W_, bank):
+                s_gt, s_v, s_f, s_n = (streak(img, m)[ev] for img in (Y, gb[..., 0], gb[..., 1], gn[..., 0]))
+                c7["v_gt"].add(s_v, s_gt); c7["f_gt"].add(s_f, s_gt); c7["v_f"].add(s_v, s_f)
+                c7["n_gt"].add(s_n, s_gt); c7["n_f"].add(s_n, s_f)
+        pr = TL.partial_r(c7["v_gt"].r, c7["v_f"].r, c7["f_gt"].r)
+        prn = TL.partial_r(c7["n_gt"].r, c7["n_f"].r, c7["f_gt"].r)
+        results["A7"] = (pr - prn) >= 0.05 and prn <= pr / 3
+        print(f"A7 glint signal   {ok(results['A7'])}  over {min(len(views), args.a4_views)} views: partial r(vessel glints, "
+              f"GT streaks | plain highlights) {pr:+.3f}, half-tile null {prn:+.3f}, excess {pr - prn:+.3f} "
+              f"(server glint test, 3 subjects: 0.149 / 0.030)")
 
     # A6 models
     try:
         import torch
         dev = args.device or default_device()
         from networks import define_G
-        for name, nc in (("preflight_tex", 15), ("preflight_ctrl", 8)):
+        for name, nc in ((args.preset, cfg.input_nc()), ("preflight_ctrl", 8)):
             c = preset(name)
             g = define_G(c).to(dev).eval()
             n_tr = sum(isinstance(mm, torch.nn.ConvTranspose2d) for mm in g.modules())
@@ -372,8 +410,9 @@ def cmd_plan(args):
 
 
 # ── stage D: evaluate ─────────────────────────────────────────────────────────
-def evaluate_epoch(plan, tex_ckpt, ctrl_ckpt, device, bank, views_held, views_train, panels_dir=None):
-    cfg_t, G_t = load_generator("preflight_tex", tex_ckpt, device)
+def evaluate_epoch(plan, tex_ckpt, ctrl_ckpt, device, bank, views_held, views_train, panels_dir=None,
+                   tex_preset="preflight_tex"):
+    cfg_t, G_t = load_generator(tex_preset, tex_ckpt, device)
     cfg_c, G_c = load_generator("preflight_ctrl", ctrl_ckpt, device)
     cfg_t.data.tex_dir = plan["tex_dir"]
     C = defaultdict(TL.Corr)
@@ -475,7 +514,8 @@ def cmd_evaluate(args):
         print("\nSWEEP (held-out M3 vessels registered: GT ceiling / tex / ctrl; train M1 fit; lattice %)")
         for e in epochs:
             C, lat, _ = evaluate_epoch(plan, Path(args.tex_run) / "checkpoints" / e,
-                                       Path(args.ctrl_run) / "checkpoints" / e, device, bank, held, train)
+                                       Path(args.ctrl_run) / "checkpoints" / e, device, bank, held, train,
+                                       tex_preset=args.tex_preset)
             g = lambda *k: C[k].r
             print(f"   {e:14} M3 gt {g('heldout','M3','gt','all'):+.3f} tex {g('heldout','M3','tex','all'):+.3f} "
                   f"ctrl {g('heldout','M3','ctrl','all'):+.3f} | M2 {g('heldout','M2','tex','all'):+.3f} | "
@@ -483,9 +523,10 @@ def cmd_evaluate(args):
                   flush=True)
 
     e = args.epoch or epochs[-1]
+    print(f"model under test: {args.tex_preset} ({args.tex_run})   control: preflight_ctrl ({args.ctrl_run})")
     C, lat, ps = evaluate_epoch(plan, Path(args.tex_run) / "checkpoints" / e,
                                 Path(args.ctrl_run) / "checkpoints" / e, device, bank, held, train,
-                                panels_dir=out / f"panels_{Path(e).stem}")
+                                panels_dir=out / f"panels_{Path(e).stem}", tex_preset=args.tex_preset)
     g = lambda *k: C[k].r
     keys = ["all", "liver", "kidney_left", "kidney_right"]
     print(f"\n=== {e} ===")
@@ -555,6 +596,7 @@ def main():
     p.add_argument("--data-root", required=True)
     p.add_argument("--subject", required=True)
     p.add_argument("--view", default="v02")
+    p.add_argument("--preset", default="preflight_tex", choices=["preflight_tex", "preflight_glint"])
     p.add_argument("--mesh-dir", default="data/meshes")
     p.add_argument("--tex-dir", default="data/renders/textures/tissue")
     p.add_argument("--a4-views", type=int, default=10)
@@ -575,6 +617,8 @@ def main():
     p = sub.add_parser("evaluate")
     p.add_argument("--plan", default="results/preflight/plan.json")
     p.add_argument("--tex-run", default="results/training_runs/preflight_tex")
+    p.add_argument("--tex-preset", default="preflight_tex", choices=["preflight_tex", "preflight_glint"],
+                   help="preset of the model under test (the control is always preflight_ctrl)")
     p.add_argument("--ctrl-run", default="results/training_runs/preflight_ctrl")
     p.add_argument("--epoch", default=None, help="e.g. epoch_149.pt (default: last common)")
     p.add_argument("--sweep", action="store_true", help="also score every common checkpoint")

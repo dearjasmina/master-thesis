@@ -45,10 +45,20 @@ import json
 # shift and the emission-pass gain, so it was 7-30 mm off the surface; and even a correct
 # coordinate would leave the network to memorise 18 texture sets. `texture` hands it the
 # looked-up texture directly. See camera_model.py and thesis_context.md §4b.
-ALL_INPUT_BUFFERS = ["seg_rgb", "depth", "normals", "segid", "position", "texture"]
+#
+#   glint   : the vessel glints v25 renders, shaded analytically (glint_model.py):
+#             [vessel glints, plain geometric highlights]                       (2 ch)
+#
+# Why `glint`: the vessels exist only in the normal-map tiles and appear in the GT as
+# specular glints. Given `texture` alone (the raw tile colours), the network drew none —
+# not even on its training views (preflight_tex: M3 0.008 vs GT 0.051). The glint term
+# depends on the tangent frame, camera and lights, all recovered and validated:
+# texture_learnability.py `glint` found the Cycles-exact tangent frame locks to the GT
+# streaks (partial r 0.149, half-tile null 0.030; 2.8x the raw-ridge proxy).
+ALL_INPUT_BUFFERS = ["seg_rgb", "depth", "normals", "segid", "position", "texture", "glint"]
 
 INPUT_CHANNELS = {"seg_rgb": 3, "depth": 1, "normals": 3, "segid": 1, "position": 3,
-                  "texture": 7}
+                  "texture": 7, "glint": 2}
 
 
 def position_channels(bands: int) -> int:
@@ -242,7 +252,7 @@ class Config:
 # a preset made config.preset() accept it while the CLIs still rejected it — which is
 # exactly how rgb_1024 failed after being added correctly.
 PRESET_NAMES = ("proto512", "full1024", "rgb_1024", "gbuf_pos1024", "preflight_tex",
-                "preflight_ctrl", "rgb_only", "overfit")
+                "preflight_ctrl", "preflight_glint", "rgb_only", "overfit")
 
 
 def preset(name: str) -> Config:
@@ -321,6 +331,17 @@ def preset(name: str) -> Config:
         c.train.save_every = 25
         c.train.sample_every = 10
         c.train.log_every = 10
+        c.train.output_dir = f"results/training_runs/{name}"
+        return c
+    if name == "preflight_glint":
+        # Pre-flight #2: preflight_tex plus the analytic glint buffer (17 ch). Identical in
+        # everything else — subjects, held-out views, losses, epochs, resize upsampling —
+        # so the existing preflight_ctrl run stays a valid control and preflight_tex shows
+        # what the glint channels add on top of the raw tiles. Glint shading costs ~1 s per
+        # view on top of the texture lookup, hence more loader workers.
+        c = preset("preflight_tex")
+        c.data.input_buffers = ["seg_rgb", "depth", "normals", "segid", "texture", "glint"]
+        c.data.num_workers = 8
         c.train.output_dir = f"results/training_runs/{name}"
         return c
     if name == "overfit":

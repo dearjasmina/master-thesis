@@ -200,3 +200,87 @@ def camera_dirs(P_mm, meta):
     P_m = P_mm / 1000.0
     V = C - P_m
     return V / np.maximum(np.linalg.norm(V, axis=-1, keepdims=True), 1e-12), P_m
+
+
+# ── the validated model ───────────────────────────────────────────────────────
+# texture_learnability.py `glint` on the server (s0098, s0746, s0194; 60 views) ranked 24
+# tangent hypotheses + a tangent-free bound by texture-locked excess. Winner:
+# sphere_origin, signs (+,-), coat unperturbed — excess +0.119 (partial r 0.149, half-tile
+# null 0.030), 2.8x the raw-ridge proxy. It is exactly Cycles' own construction:
+#   * blender/mesh.cpp stores generated = co*size - loc, and MikkMeshWrapper undoes it with
+#     (orco + orco_loc) * inv_orco_size, so map_to_sphere() sees RAW object coordinates —
+#     a sphere mapping about the object origin, not the texture-space box.
+#   * Cycles' map_to_sphere has v = 1 - acos(z/|co|)/pi, whose derivative is the opposite
+#     of the -asin(z/|co|)/pi used by sphere_uv(), so the hypothesis search needed sB = -1.
+#     With Cycles' own v below, both signs are +1.
+#   * Principled BSDF leaves an unlinked Coat Normal at the unperturbed shading normal.
+# cycles_uv() + perturb(sT=+1, sB=+1) + coat on N reproduces sphere_origin+-_C0 exactly.
+GLINT_LOG_RANGE = 6.0     # log1p(G / view median of plain highlights) mapped to [0, 1]
+
+
+def cycles_uv(P_mm):
+    """Cycles map_to_sphere() on raw object coordinates (util/math: u, v conventions)."""
+    r = np.linalg.norm(P_mm, axis=-1)
+    u = 0.5 - np.arctan2(P_mm[..., 0], P_mm[..., 1]) / (2 * np.pi)
+    v = 1.0 - np.arccos(np.clip(P_mm[..., 2] / np.maximum(r, 1e-9), -1, 1)) / np.pi
+    return u, v
+
+
+def glint_buffer(view_dir, meta, pid_to_gid, organ_names, bank, tex_class_fn, box_weights_fn,
+                 box_project_fn, tex_shift_mm=0.0):
+    """HxWx2 float32 in [-1, 1]: [vessel glints, plain geometric highlights]. Background -1.
+
+    Channel 0 shades the Cycles-exact perturbed normal (normal-map tile, MikkTSpace frame on
+    map_to_sphere of object coordinates, strength 0.8) for the base lobe and the
+    unperturbed normal for the coat; channel 1 shades the unperturbed normal for both. The
+    network gets the vessel term and the geometric term separately, so the difference is
+    the vessel contribution. Both use the view's median plain highlight as reference, so
+    their ratio is preserved. Texture helpers are passed in to avoid a circular import.
+    tex_shift_mm offsets only the tile lookups — preflight.py uses a half tile as a null.
+    """
+    import camera_model as cm
+    view_dir = Path(view_dir)
+    P = cm.unproject(cm.depth_m(view_dir), meta)
+    N = cm.normals_world(view_dir)
+    lut = np.asarray(pid_to_gid).astype(np.int64)
+    gid = lut[np.clip(cm.segid_pid(view_dir), 0, len(lut) - 1)]
+    Vd, P_m = camera_dirs(P, meta)
+    rig = light_rig(meta)
+    tp = tissue_params()
+    T, B = screen_tangents(P, N, *cycles_uv(P))
+    H, W = gid.shape
+    vessel, flat = np.zeros((H, W)), np.zeros((H, W))
+    organ_px = gid > 0
+    for g in np.unique(gid):
+        if g <= 0:
+            continue
+        organ = organ_names[int(g) - 1]
+        t = tp.get(organ)
+        if t is None:
+            continue
+        m = gid == g
+        Nn, Vn, Pn = N[m], Vd[m], P_m[m]
+        cls = tex_class_fn(organ)
+        nimg, ns = bank.get(cls, "normal") if cls else (None, 0.0)
+        rimg, rs = bank.get(cls, "rough") if cls else (None, 0.0)
+        w = box_weights_fn(Nn)
+        Pt = P[m] + tex_shift_mm
+        rough = t["rough"] * ((0.6 + 0.8 * box_project_fn(rimg, Pt, Nn, tex_mm=bank.tex_mm, w=w, scale=rs))
+                              if rimg is not None else 1.0)
+        a_b = np.broadcast_to(np.asarray(rough, np.float64) ** 2, (len(Pn),))
+        a_c = np.full(len(Pn), t["coat_rough"] ** 2)
+        f0b, f0c = f0_from_ior(t["ior"]), f0_from_ior(COAT_IOR)
+        coat = t["coat"] * specular(Nn, Vn, Pn, rig, a_c, f0c)
+        flat[m] = specular(Nn, Vn, Pn, rig, a_b, f0b) + coat
+        if nimg is not None:
+            col = box_project_fn(nimg, Pt, Nn, tex_mm=bank.tex_mm, w=w, scale=ns) * 2.0 - 1.0
+            Np = perturb(Nn, T[m], B[m], col)
+            vessel[m] = specular(Np, Vn, Pn, rig, a_b, f0b) + coat
+        else:
+            vessel[m] = flat[m]
+    ref = max(float(np.median(flat[organ_px])), 1e-12) if organ_px.any() else 1.0
+    out = np.full((H, W, 2), -1.0, dtype=np.float32)
+    for k, G in enumerate((vessel, flat)):
+        ch = np.clip(np.log1p(G / ref) / GLINT_LOG_RANGE, 0.0, 1.0) * 2.0 - 1.0
+        out[..., k] = np.where(organ_px, ch, -1.0)
+    return out

@@ -32,7 +32,8 @@ from torch.utils.data import Dataset
 
 from config import buffer_channels
 from exr import read_render_exr
-from texture_lookup import TextureBank, texture_buffer
+from texture_lookup import TextureBank, texture_buffer, tex_class, box_weights, box_project
+import glint_model
 from splits import assign_splits
 
 cv2.setNumThreads(0)  # avoid oversubscription with DataLoader workers
@@ -294,6 +295,12 @@ class PairedRenderDataset(Dataset):
         return texture_buffer(d, meta, self._segid_lut[d.parent.name], CANONICAL_TISSUES,
                               self._tex_bank)
 
+    def _load_glint(self, d: Path, meta) -> np.ndarray:
+        if getattr(self, "_tex_bank", None) is None:
+            self._tex_bank = TextureBank(self.dcfg.tex_dir, self.dcfg.tex_mm)
+        return glint_model.glint_buffer(d, meta, self._segid_lut[d.parent.name], CANONICAL_TISSUES,
+                                        self._tex_bank, tex_class, box_weights, box_project)
+
     def _load_target(self, d: Path, exr) -> np.ndarray:
         t = self.dcfg.target
         if t == "preview_png":
@@ -327,6 +334,7 @@ class PairedRenderDataset(Dataset):
             elif b == "segid":  planes.append(self._load_segid(d))
             elif b == "position": planes.append(self._load_position(d, meta))
             elif b == "texture":  planes.append(self._load_texture(d, meta))
+            elif b == "glint":    planes.append(self._load_glint(d, meta))
             else: raise ValueError(f"unknown input buffer '{b}'")
         target = self._load_target(d, exr)
 
@@ -340,7 +348,7 @@ class PairedRenderDataset(Dataset):
         # It is never sound with `position`: mirroring the image does not mirror the
         # object-space coordinate, so the flipped pixels would carry the coordinate of
         # the point on the OTHER side of the organ. Fail loudly rather than train on it.
-        if self.dcfg.hflip and ("position" in bufs or "texture" in bufs):
+        if self.dcfg.hflip and ("position" in bufs or "texture" in bufs or "glint" in bufs):
             raise ValueError("hflip is invalid with the 'position'/'texture' buffers — "
                              "mirroring the image does not mirror object-space coordinates")
         if self.split == "train" and self.dcfg.hflip and np.random.rand() < 0.5:
