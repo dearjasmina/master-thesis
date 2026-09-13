@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import preset, PRESET_NAMES
 from networks import define_G
 from exr import read_render_exr
-from dataset import ORGAN_TO_GID, NUM_CANONICAL, _resize
+from dataset import ORGAN_TO_GID, NUM_CANONICAL, _resize, unproject_position
 
 
 def build_segid_lut(subject_dir: Path) -> np.ndarray:
@@ -69,6 +69,10 @@ def load_input(view_dir: Path, cfg, lut: np.ndarray) -> np.ndarray:
             pid = np.clip(pid, 0, len(lut) - 1)
             gid = lut[pid] / float(NUM_CANONICAL)
             planes.append((np.clip(gid, 0, 1)[..., None] * 2.0 - 1.0).astype(np.float32))
+        elif b == "position":
+            # Imported from dataset.py, not re-implemented, so inference cannot silently
+            # drift from the coordinate the network was trained on. Needs meta.json.
+            planes.append(unproject_position(view_dir, meta, cfg.data.position_bands))
         else:
             raise ValueError(f"unknown input buffer '{b}'")
     planes = [_resize(p, cfg.data.size) for p in planes]

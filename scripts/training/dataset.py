@@ -41,6 +41,62 @@ cv2.setNumThreads(0)  # avoid oversubscription with DataLoader workers
 # the vessel calibres measured from HiP-CT (0.2-1.5 mm).
 POSITION_BASE_LAMBDA_MM = 256.0
 
+
+def unproject_position(d: Path, meta, bands: int) -> np.ndarray:
+    """Object-space XYZ per pixel, unprojected from depth.exr via meta.json.
+
+    Module-level rather than a method because infer.py builds its input stack without a
+    Dataset (it runs on the cheap G-buffers alone, with no ground truth). Both callers
+    share this one implementation so inference cannot drift from training.
+
+    v25 samples every organ texture through ShaderNodeTexCoord's *Object* output in BOX
+    projection, so the GT vessel/mottle pattern at a pixel is a deterministic function of
+    this coordinate — and nothing in {seg_rgb, depth, normals, segid} determines it,
+    because recovering the 3D point needs the camera pose. Supplying it is what makes the
+    texture predictable rather than an average over positions.
+
+    Meshes are imported with global_scale=0.001 and no other transform, so object-space
+    mm == world metres * 1000. Verified on s0050: the reconstruction lands at 118..348 mm
+    against the known local vertex range 155..340, and every foreground point falls inside
+    the organ bounding sphere (p99 0.303 m vs r 0.331).
+
+    depth.exr holds Blender's 'View Z Depth' — PLANAR distance along the camera's -Z
+    axis, NOT distance along the ray. The ray convention warps the result by up to 4% at
+    the frame corners (~12 mm, an order of magnitude more than a vessel diameter);
+    measured against the stored normals, planar is the better fit.
+
+    No per-subject offset is subtracted: the texture is a fixed function of the ABSOLUTE
+    object coordinate, so re-centring per subject would make the same input coordinate
+    mean different things in different subjects and destroy exactly the determinism this
+    buffer exists to create.
+    """
+    if "K" not in meta or "cam_to_world" not in meta:
+        raise KeyError(f"{d}/meta.json lacks K / cam_to_world — the 'position' buffer "
+                       f"needs the camera pose to unproject depth")
+    Z = read_render_exr(str(d / "depth.exr"), want=("image",))["image"][..., 0].astype(np.float32)
+    K = np.asarray(meta["K"], dtype=np.float32)
+    c2w = np.asarray(meta["cam_to_world"], dtype=np.float32)
+    H, W = Z.shape
+    u, v = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+    # Blender camera: +X right, +Y up, looking down -Z; image row 0 is the top.
+    cam = np.stack([(u - K[0, 2]) / K[0, 0] * Z,
+                    -(v - K[1, 2]) / K[1, 1] * Z,
+                    -Z], axis=-1)
+    world = cam @ c2w[:3, :3].T + c2w[:3, 3]
+
+    # These EEVEE emission passes leave the background near 1e-3, NOT 0, so a ">0"
+    # test would admit the whole background and unproject it onto the camera.
+    cam_dist, radius = float(meta.get("camera_distance", 0.0)), float(meta.get("radius", 0.0))
+    fg = (Z > (0.5 * (cam_dist - radius) if cam_dist > 0 else 0.5))[..., None]
+
+    planes = [np.clip(world, -2.0, 2.0)]            # metres, absolute scale kept
+    mm = world * 1000.0
+    for k in range(int(bands)):
+        w = 2.0 * np.pi / (POSITION_BASE_LAMBDA_MM / (4.0 ** k))
+        planes.append(np.sin(mm * w))
+        planes.append(np.cos(mm * w))
+    return (np.concatenate(planes, axis=-1) * fg).astype(np.float32)
+
 # Canonical organ → fixed global ID (1-based), matching the TISSUES order in
 # generate_training_dataset.py. The render stores per-subject pass_index (assigned by
 # load order among PRESENT organs), so the same organ gets different IDs across subjects.
@@ -228,52 +284,7 @@ class PairedRenderDataset(Dataset):
         return np.clip(gid, 0.0, 1.0)[..., None] * 2.0 - 1.0
 
     def _load_position(self, d: Path, meta) -> np.ndarray:
-        """Object-space XYZ per pixel, unprojected from depth.exr via meta.json.
-
-        v25 samples every organ texture through ShaderNodeTexCoord's *Object* output in
-        BOX projection, so the GT vessel/mottle pattern at a pixel is a deterministic
-        function of this coordinate — and nothing in {seg_rgb, depth, normals, segid}
-        determines it, because recovering the 3D point needs the camera pose. Supplying
-        it is what makes the texture predictable rather than an average over positions.
-
-        Meshes are imported with global_scale=0.001 and no other transform, so
-        object-space mm == world metres * 1000. Verified on s0050: the reconstruction
-        lands at 118..348 mm against the known local vertex range 155..340, and every
-        foreground point falls inside the organ bounding sphere (p99 0.303 m vs r 0.331).
-
-        depth.exr holds Blender's 'View Z Depth' — PLANAR distance along the camera's
-        -Z axis, NOT distance along the ray. The ray convention warps the result by up
-        to 4% at the frame corners (~12 mm here, an order of magnitude more than a
-        vessel diameter); measured against the stored normals, planar is the better fit.
-
-        No per-subject offset is subtracted: the texture is a fixed function of the
-        ABSOLUTE object coordinate, so re-centring per subject would make the same input
-        coordinate mean different things in different subjects and destroy exactly the
-        determinism this buffer exists to create.
-        """
-        Z = read_render_exr(str(d / "depth.exr"), want=("image",))["image"][..., 0].astype(np.float32)
-        K = np.asarray(meta["K"], dtype=np.float32)
-        c2w = np.asarray(meta["cam_to_world"], dtype=np.float32)
-        H, W = Z.shape
-        u, v = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
-        # Blender camera: +X right, +Y up, looking down -Z; image row 0 is the top.
-        cam = np.stack([(u - K[0, 2]) / K[0, 0] * Z,
-                        -(v - K[1, 2]) / K[1, 1] * Z,
-                        -Z], axis=-1)
-        world = cam @ c2w[:3, :3].T + c2w[:3, 3]
-
-        # These EEVEE emission passes leave the background near 1e-3, NOT 0, so a ">0"
-        # test would admit the whole background and unproject it onto the camera.
-        cam_dist, radius = float(meta.get("camera_distance", 0.0)), float(meta.get("radius", 0.0))
-        fg = (Z > (0.5 * (cam_dist - radius) if cam_dist > 0 else 0.5))[..., None]
-
-        planes = [np.clip(world, -2.0, 2.0)]            # metres, absolute scale kept
-        mm = world * 1000.0
-        for k in range(int(self.dcfg.position_bands)):
-            w = 2.0 * np.pi / (POSITION_BASE_LAMBDA_MM / (4.0 ** k))
-            planes.append(np.sin(mm * w))
-            planes.append(np.cos(mm * w))
-        return (np.concatenate(planes, axis=-1) * fg).astype(np.float32)
+        return unproject_position(d, meta, self.dcfg.position_bands)
 
     def _load_target(self, d: Path, exr) -> np.ndarray:
         t = self.dcfg.target
