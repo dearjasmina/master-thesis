@@ -594,6 +594,188 @@ def cmd_phase(args):
     print(f"panels written to {out_dir}  (orig | half-period | diff x8 | band-identical | diff x8)")
 
 
+# ── glint (can the vessel glints be COMPUTED from the dataset?) ────────────────
+_BBOX = {}
+
+
+def mesh_bbox(mesh_dir, subject, organ):
+    """Blender's auto texture space for an imported OBJ: its vertex bounds (centre, half-size)."""
+    key = (str(mesh_dir), subject, organ)
+    if key not in _BBOX:
+        f = Path(mesh_dir) / subject / f"{organ}.obj"
+        if not f.exists():
+            _BBOX[key] = None
+        else:
+            v = np.array([l.split()[1:4] for l in open(f) if l.startswith("v ")], np.float64)
+            lo, hi = v.min(0), v.max(0)
+            _BBOX[key] = ((lo + hi) / 2.0, (hi - lo) / 2.0)
+    return _BBOX[key]
+
+
+def partial_r(r_xy, r_xz, r_yz):
+    """corr(x, y | z) from pooled correlations over identical samples."""
+    return (r_xy - r_xz * r_yz) / np.sqrt(max((1 - r_xz ** 2) * (1 - r_yz ** 2), 1e-12))
+
+
+def cmd_glint(args):
+    """Render the vessel glints analytically under each tangent-frame hypothesis and score
+    them against the GT's thin streaks, over and above plain geometric highlights."""
+    import glint_model as gm
+    from texture_lookup import TextureBank
+    tp = gm.tissue_params()
+    bank = TextureBank(args.tex_dir, args.tex_mm)
+    views = list_views(args)
+    PAD = 24
+    signs = {"++": (1, 1), "+-": (1, -1), "-+": (-1, 1), "--": (-1, -1)}
+    C = defaultdict(Corr)          # (hyp, organ_key, "gt"|"flat") -> Corr ; (hyp, key, "null_gt"|"null_flat")
+    print(f"glint: {len(views)} views, tangent families {list(gm.TANGENT_FAMILIES)}, "
+          f"sign variants {list(signs)}, coat uses perturbed normal: no (C0) / yes (C1)")
+
+    for i, vd in enumerate(views):
+        V = load_view(vd)
+        meta, gid = V["meta"], V["gid"]
+        Vd, P_m = gm.camera_dirs(V["P"], meta)
+        rig = gm.light_rig(meta)
+        Y = lum(V["gt"]).astype(np.float64)
+        subj = Path(vd).parent.name
+        for g in np.unique(gid):
+            if g <= 0:
+                continue
+            organ = CANONICAL_TISSUES[g - 1]
+            cls = tex_class(organ)
+            t = tp.get(organ)
+            nimg, ns = bank.get(cls, "normal") if cls else (None, 0)
+            rimg, rs = bank.get(cls, "rough") if cls else (None, 0)
+            if t is None or nimg is None or rimg is None:
+                continue
+            m_full = gid == g
+            if int(erode(m_full, 3).sum()) < 400:
+                continue
+            ys, xs = np.nonzero(m_full)
+            sl = (slice(max(ys.min() - PAD, 0), ys.max() + PAD + 1), slice(max(xs.min() - PAD, 0), xs.max() + PAD + 1))
+            m = m_full[sl]
+            ev = erode(m, 3)
+            Pc, Nc, Vc, Pmc = V["P"][sl], V["N"][sl], Vd[sl], P_m[sl]
+            Pn, Nn, Vn, Pmn = Pc[m], Nc[m], Vc[m], Pmc[m]
+            w = box_weights(Nn)
+            rough_px = t["rough"] * (0.6 + 0.8 * box_project(rimg, Pn, Nn, tex_mm=args.tex_mm, w=w, scale=rs))
+            a_b, a_c = rough_px ** 2, np.full(len(Pn), t["coat_rough"] ** 2)
+            f0b, f0c = gm.f0_from_ior(t["ior"]), gm.f0_from_ior(gm.COAT_IOR)
+            shade = lambda Nb, Ncoat, tb=None, tc=None: (
+                gm.specular(Nb, Vn, Pmn, rig, a_b, f0b, tb) + t["coat"] * gm.specular(Ncoat, Vn, Pmn, rig, a_c, f0c, tc))
+
+            flat = shade(Nn, Nn)
+            ref = max(float(np.median(flat)), 1e-12)
+
+            def stat(vals):
+                img = np.zeros(m.shape)
+                img[m] = np.log1p(vals / ref)
+                return highpass(np.abs(highpass(img, m, 1.5)), m, 6.0)[ev]
+
+            gt_s = highpass(np.abs(highpass(Y[sl], m, 1.5)), m, 6.0)[ev]
+            flat_s = stat(flat)
+            keys = ["all"] + ([organ] if organ in ("liver", "kidney_left", "kidney_right", "spleen") else [])
+
+            def score(name, vals, null_vals):
+                s, sn = stat(vals), stat(null_vals)
+                for k in keys:
+                    C[(name, k, "gt")].add(s, gt_s)
+                    C[(name, k, "flat")].add(s, flat_s)
+                    C[(name, k, "null_gt")].add(sn, gt_s)
+                    C[(name, k, "null_flat")].add(sn, flat_s)
+
+            for k in keys:
+                C[("flat", k, "gt")].add(flat_s, gt_s)
+
+            # Tangent frames depend on geometry only: build once, reuse for real and null tiles.
+            bb = mesh_bbox(args.mesh_dir, subj, organ)
+            frames = {}
+            for fam in gm.TANGENT_FAMILIES:
+                if bb is None and fam != "sphere_origin":
+                    continue
+                T_, B_ = gm.screen_tangents(Pc, Nc, *gm.sphere_uv(Pc, fam, bb))
+                frames[fam] = (T_[m], B_[m])
+
+            def hypotheses(col):
+                out = {}
+                tilt = gm.max_tilt(col)
+                out["free_C0"] = shade(Nn, Nn, tb=tilt)
+                out["free_C1"] = shade(Nn, Nn, tb=tilt, tc=tilt)
+                out["ridge"] = np.hypot(col[:, 0], col[:, 1])
+                for fam, (Tm, Bm) in frames.items():
+                    for sname, (sT, sB) in signs.items():
+                        Np = gm.perturb(Nn, Tm, Bm, col, sT, sB)
+                        out[f"{fam}{sname}_C0"] = shade(Np, Nn)
+                        out[f"{fam}{sname}_C1"] = shade(Np, Np)
+                return out
+
+            tile = lambda shift: box_project(nimg, Pn + shift, Nn, tex_mm=args.tex_mm, w=w, scale=ns) * 2.0 - 1.0
+            maps, nulls = hypotheses(tile(0.0)), hypotheses(tile(args.tex_mm / 2.0))
+            for name, vals in maps.items():
+                if name == "ridge":          # raw ridge magnitude, not a radiance: score it directly
+                    s = highpass(_to_img(m, vals), m, 6.0)[ev]
+                    sn = highpass(_to_img(m, nulls[name]), m, 6.0)[ev]
+                    for k in keys:
+                        C[(name, k, "gt")].add(s, gt_s); C[(name, k, "flat")].add(s, flat_s)
+                        C[(name, k, "null_gt")].add(sn, gt_s); C[(name, k, "null_flat")].add(sn, flat_s)
+                else:
+                    score(name, vals, nulls[name])
+        print(f"  [{i+1}/{len(views)}] {subj}/{Path(vd).name}", flush=True)
+
+    # ── report ──
+    rf = C[("flat", "all", "gt")].r
+    names = sorted({k[0] for k in C if k[0] != "flat"})
+    # Rank by TEXTURE-LOCKED excess (partial r minus its half-tile null), not raw partial r.
+    # The local smoke test showed any normal-map perturbation — even a misplaced one — lifts
+    # partial r by ~0.03-0.045, because added sparkle correlates with where highlights are.
+    # That floor is not about vessel placement; only the excess over the null is.
+    rows = []
+    for h in names:
+        r = C[(h, "all", "gt")].r
+        pr = partial_r(r, C[(h, "all", "flat")].r, rf)
+        prn = partial_r(C[(h, "all", "null_gt")].r, C[(h, "all", "null_flat")].r, rf)
+        liv = C.get((h, "liver", "gt"))
+        rows.append((pr - prn, h, r, pr, prn, liv.r if liv else float("nan")))
+    rows.sort(key=lambda x: -x[0])
+    print(f"\nplain geometric highlights (no normal map): r(flat, GT streaks) = {rf:+.3f}   <- light-rig check")
+    print("\nhypotheses ranked by texture-locked excess = partial r - null partial r:")
+    print(f"   {'hypothesis':26} {'excess':>8} {'partial r':>10} {'null partial':>13} {'raw r':>8} {'liver r':>8}")
+    for ex, h, r, pr, prn, lv in rows:
+        print(f"   {h:26} {ex:>+8.3f} {pr:>+10.3f} {prn:>+13.3f} {r:>+8.3f} {lv:>+8.3f}")
+    ex_b, name_b, _, pr_b, prn_b, _ = rows[0]
+    ex_r = next(x[0] for x in rows if x[1] == "ridge")
+    T = dict(light=0.05, vessel=0.10, null_frac=1 / 3, over_ridge=1.5)
+    checks = {
+        "G1 light rig reproduces highlights": (rf >= T["light"], f"r(flat) {rf:+.3f} >= {T['light']}"),
+        "G2 vessel glints computable": (pr_b >= T["vessel"], f"partial {pr_b:+.3f} ({name_b}) >= {T['vessel']}"),
+        "G3 locked to the texture": (prn_b <= T["null_frac"] * pr_b, f"null partial {prn_b:+.3f} <= {pr_b:+.3f}/3"),
+        "G4 beats the raw ridge proxy": (ex_b >= T["over_ridge"] * max(ex_r, 0.01),
+                                         f"excess {ex_b:+.3f} >= {T['over_ridge']} x max(ridge excess {ex_r:+.3f}, 0.01)"),
+    }
+    print("\nDECISION (thresholds fixed before the server run)")
+    for k, (flag, why) in checks.items():
+        print(f"   {'PASS' if flag else 'FAIL'}  {k:36} {why}")
+    f = {k.split()[0]: v[0] for k, v in checks.items()}
+    if all(f.values()):
+        v = f"GO — '{name_b}' computes the vessel glints; build the glint pre-flight on it"
+    elif not f["G1"]:
+        v = "STOP — the light/specular model does not reproduce these views' highlights; fix it before judging vessels"
+    elif not f["G3"]:
+        v = ("NO-GO — no texture-LOCKED glint signal (null ~ real). If `preflight.py check` A1 did not pass, "
+             "the tiles are not the rendering tiles; otherwise -> LIMITATION")
+    elif not f["G2"]:
+        v = "NO-GO — glints are locked to the texture but too weak to be a useful input -> LIMITATION"
+    else:
+        v = "NO-GO — no better than the raw normal-map ridges the pre-flight already gave the network -> LIMITATION"
+    print(f"\nVERDICT glint: {v}")
+
+
+def _to_img(m, vals):
+    img = np.zeros(m.shape)
+    img[m] = vals
+    return img
+
+
 # ── geometry (gold standard: reconstructed points vs the subject's own meshes) ──
 def cmd_geometry(args):
     """Distance from every reconstructed organ pixel to the organ meshes that were rendered.
@@ -724,6 +906,10 @@ def main():
     p.add_argument("--max-views", type=int, default=8)
     p.add_argument("--out", default="results/texture_phase")
     p.set_defaults(fn=cmd_phase)
+
+    p = sub.add_parser("glint"); common(p)
+    p.add_argument("--mesh-dir", default="data/meshes")
+    p.set_defaults(fn=cmd_glint)
 
     p = sub.add_parser("geometry"); common(p)
     p.add_argument("--mesh-dir", default="data/meshes")
