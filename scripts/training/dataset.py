@@ -32,6 +32,7 @@ from torch.utils.data import Dataset
 
 from config import buffer_channels
 from exr import read_render_exr
+from texture_lookup import TextureBank, texture_buffer
 from splits import assign_splits
 
 cv2.setNumThreads(0)  # avoid oversubscription with DataLoader workers
@@ -286,6 +287,13 @@ class PairedRenderDataset(Dataset):
     def _load_position(self, d: Path, meta) -> np.ndarray:
         return unproject_position(d, meta, self.dcfg.position_bands)
 
+    def _load_texture(self, d: Path, meta) -> np.ndarray:
+        # Created lazily so each DataLoader worker holds its own tile cache.
+        if getattr(self, "_tex_bank", None) is None:
+            self._tex_bank = TextureBank(self.dcfg.tex_dir, self.dcfg.tex_mm)
+        return texture_buffer(d, meta, self._segid_lut[d.parent.name], CANONICAL_TISSUES,
+                              self._tex_bank)
+
     def _load_target(self, d: Path, exr) -> np.ndarray:
         t = self.dcfg.target
         if t == "preview_png":
@@ -318,6 +326,7 @@ class PairedRenderDataset(Dataset):
             elif b == "normals":planes.append(self._load_normals(d, meta))
             elif b == "segid":  planes.append(self._load_segid(d))
             elif b == "position": planes.append(self._load_position(d, meta))
+            elif b == "texture":  planes.append(self._load_texture(d, meta))
             else: raise ValueError(f"unknown input buffer '{b}'")
         target = self._load_target(d, exr)
 
@@ -331,9 +340,9 @@ class PairedRenderDataset(Dataset):
         # It is never sound with `position`: mirroring the image does not mirror the
         # object-space coordinate, so the flipped pixels would carry the coordinate of
         # the point on the OTHER side of the organ. Fail loudly rather than train on it.
-        if self.dcfg.hflip and "position" in bufs:
-            raise ValueError("hflip is invalid with the 'position' buffer — mirroring "
-                             "the image does not mirror the 3D coordinate it encodes")
+        if self.dcfg.hflip and ("position" in bufs or "texture" in bufs):
+            raise ValueError("hflip is invalid with the 'position'/'texture' buffers — "
+                             "mirroring the image does not mirror object-space coordinates")
         if self.split == "train" and self.dcfg.hflip and np.random.rand() < 0.5:
             x = x[:, ::-1, :].copy()
             target = target[:, ::-1, :].copy()

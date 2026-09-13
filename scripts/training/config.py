@@ -36,9 +36,19 @@ import json
 # a smooth, texture-free surface. That is exactly the artefact seen in the renders.
 # `position` closes the gap, and needs no re-rendering — meta.json already stores K and
 # cam_to_world. See dataset.py::_load_position.
-ALL_INPUT_BUFFERS = ["seg_rgb", "depth", "normals", "segid", "position"]
+#
+#   texture : the v25 albedo / normal-map / roughness tiles, BOX-projected at the
+#             CORRECTED object-space position (texture_lookup.py)                (7 ch)
+#
+# `texture` supersedes `position` as the way to deliver organ texture. `position` (as
+# trained in gbuf_pos1024) uses the legacy unprojection, which ignores the camera's lens
+# shift and the emission-pass gain, so it was 7-30 mm off the surface; and even a correct
+# coordinate would leave the network to memorise 18 texture sets. `texture` hands it the
+# looked-up texture directly. See camera_model.py and thesis_context.md §4b.
+ALL_INPUT_BUFFERS = ["seg_rgb", "depth", "normals", "segid", "position", "texture"]
 
-INPUT_CHANNELS = {"seg_rgb": 3, "depth": 1, "normals": 3, "segid": 1, "position": 3}
+INPUT_CHANNELS = {"seg_rgb": 3, "depth": 1, "normals": 3, "segid": 1, "position": 3,
+                  "texture": 7}
 
 
 def position_channels(bands: int) -> int:
@@ -75,6 +85,11 @@ class DataConfig:
     # gives ~8 samples per cycle and is safe. dataset.py measures the real step and
     # refuses an aliased setting. Same reasoning as v25's _safe_detail octave cap.
     position_bands: int = 3
+
+    # `texture` buffer: MUST be the tiles the dataset was rendered with (synthesis is not
+    # reproducible — see texture_lookup.py); verify against MD5SUMS.txt beside them.
+    tex_dir: str = "data/renders/textures/tissue"
+    tex_mm: float = 80.0                # generate_training_dataset.py --tex_mm
 
     # Ground-truth target. See README "Target choice".
     #   preview_png : rgb_preview.png — AgX + fog-glow + chromatic aberration baked in (EXACT, default).
@@ -143,6 +158,10 @@ class ModelConfig:
     norm: str = "instance"
     output_nc: int = 3         # RGB target
 
+    # Generator 2x upsampling: "transpose" (original pix2pixHD, every checkpoint so far)
+    # or "resize" (nearest + conv; no checkerboard lattice). See networks.up_layers.
+    upsample: str = "transpose"
+
 
 @dataclass
 class LossConfig:
@@ -207,7 +226,9 @@ class Config:
     def summary(self) -> str:
         pos = (f" pos_bands={self.data.position_bands}"
                if "position" in self.data.input_buffers else "")
-        return (f"netG={self.model.netG} ngf={self.model.ngf} | "
+        if "texture" in self.data.input_buffers:
+            pos += f" tex_dir={self.data.tex_dir} tex_mm={self.data.tex_mm:g}"
+        return (f"netG={self.model.netG} ngf={self.model.ngf} up={self.model.upsample} | "
                 f"in={self.data.input_buffers}({self.input_nc()}ch){pos} → out={self.model.output_nc}ch | "
                 f"target={self.data.target} normals={self.data.normals_space} | "
                 f"size={self.data.size} | losses L1={self.loss.w_l1} VGG={self.loss.w_vgg} "
@@ -220,7 +241,8 @@ class Config:
 # evaluate.py, infer.py and eval_common.py used to hardcode this separately, so adding
 # a preset made config.preset() accept it while the CLIs still rejected it — which is
 # exactly how rgb_1024 failed after being added correctly.
-PRESET_NAMES = ("proto512", "full1024", "rgb_1024", "gbuf_pos1024", "rgb_only", "overfit")
+PRESET_NAMES = ("proto512", "full1024", "rgb_1024", "gbuf_pos1024", "preflight_tex",
+                "preflight_ctrl", "rgb_only", "overfit")
 
 
 def preset(name: str) -> Config:
@@ -280,6 +302,26 @@ def preset(name: str) -> Config:
         c = preset("full1024")
         c.data.input_buffers = ["seg_rgb", "depth", "normals", "segid", "position"]
         c.train.output_dir = "results/training_runs/gbuf_pos1024"
+        return c
+    if name in ("preflight_tex", "preflight_ctrl"):
+        # Pre-flight for the last full retrain (scripts/analysis/preflight.py). Two runs on
+        # the SAME 2 subjects with the SAME held-out views, differing in exactly one thing:
+        #   preflight_tex  = full1024 inputs + `texture`   (15 ch), resize upsampling
+        #   preflight_ctrl = full1024 inputs               ( 8 ch), resize upsampling
+        # Both use resize upsampling so the control isolates the texture input, and the
+        # lattice check covers both. Pass --subjects and --exclude-file from the plan.
+        # grad_accum=1: 30-ish training views need optimizer steps, not a large batch.
+        c = preset("full1024")
+        c.model.upsample = "resize"
+        if name == "preflight_tex":
+            c.data.input_buffers = ["seg_rgb", "depth", "normals", "segid", "texture"]
+        c.data.num_workers = 4
+        c.train.epochs = 150
+        c.train.grad_accum = 1
+        c.train.save_every = 25
+        c.train.sample_every = 10
+        c.train.log_every = 10
+        c.train.output_dir = f"results/training_runs/{name}"
         return c
     if name == "overfit":
         # Step-1 sanity: memorise a handful of subjects (pass --subjects / --max-subjects).

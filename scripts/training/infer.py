@@ -33,7 +33,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import preset, PRESET_NAMES
 from networks import define_G
 from exr import read_render_exr
-from dataset import ORGAN_TO_GID, NUM_CANONICAL, _resize, unproject_position
+from dataset import ORGAN_TO_GID, NUM_CANONICAL, CANONICAL_TISSUES, _resize, unproject_position
+from texture_lookup import TextureBank, texture_buffer
+
+_BANKS = {}
+
+
+def _bank(cfg):
+    key = (cfg.data.tex_dir, cfg.data.tex_mm)
+    if key not in _BANKS:
+        _BANKS[key] = TextureBank(*key)
+    return _BANKS[key]
 
 
 def build_segid_lut(subject_dir: Path) -> np.ndarray:
@@ -73,6 +83,9 @@ def load_input(view_dir: Path, cfg, lut: np.ndarray) -> np.ndarray:
             # Imported from dataset.py, not re-implemented, so inference cannot silently
             # drift from the coordinate the network was trained on. Needs meta.json.
             planes.append(unproject_position(view_dir, meta, cfg.data.position_bands))
+        elif b == "texture":
+            # Same function the dataloader calls — train and inference cannot diverge.
+            planes.append(texture_buffer(view_dir, meta, lut, CANONICAL_TISSUES, _bank(cfg)))
         else:
             raise ValueError(f"unknown input buffer '{b}'")
     planes = [_resize(p, cfg.data.size) for p in planes]

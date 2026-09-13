@@ -41,25 +41,15 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "training"))
 from exr import read_render_exr                                   # noqa: E402
 from dataset import unproject_position, CANONICAL_TISSUES, ORGAN_TO_GID  # noqa: E402
-
-# REFERENCE_LOOK keys in render_pair_totalseg_v25_textured.py — the texture class names.
-TEX_CLASSES = ["lung", "liver", "spleen", "kidney", "heart", "stomach", "bowel",
-               "duodenum", "colon", "pancreas", "gallbladder", "esophagus",
-               "urinary_bladder", "aorta", "vena_cava", "portal", "vertebrae",
-               "autochthon"]
-TEX_MM = 80.0          # generate_training_dataset.py --tex_mm default
-BLEND = 0.35           # _box_tex projection_blend
+# The camera model and the BOX projection live in the training code and are imported
+# here rather than copied: these tests must validate exactly what the dataloader feeds
+# the network.
+import camera_model as cm                                                # noqa: E402
+from texture_lookup import (TEX_CLASSES, TEX_MM, BLEND, tex_class, box_weights,  # noqa: E402
+                            AXIS_UV, CYCLES_FLIP_U, sample_wrap, project_axis, box_project)
 
 
 # ── data ──────────────────────────────────────────────────────────────────────
-def tex_class(organ):
-    """Mirror of v25 tissue_textures(): exact name, else longest class contained."""
-    if organ in TEX_CLASSES:
-        return organ
-    hits = [k for k in TEX_CLASSES if k in organ]
-    return max(hits, key=len) if hits else None
-
-
 _TEX = {}
 
 
@@ -90,33 +80,10 @@ def subject_lut(subj_dir):
     return lut
 
 
-# ── camera model: what meta.json does NOT tell you ────────────────────────────
-# Both corrections were measured against the subjects' own meshes (s0895 @ 1.35 m and
-# s0050 @ 2.2 m): with them, reconstructed points land 0.64-0.86 mm from the mesh
-# (the vertex-spacing floor); without them, 7-30 mm off.
-#
-# 1. LENS SHIFT. v25 setup_camera() sets shift_x=-0.05, shift_y=+0.02, but meta.json's
-#    K puts the principal point at the image centre. Blender shift is in units of the
-#    larger sensor dimension, so the true principal point is (W/2 - sx*W, H/2 + sy*W)
-#    = (563.2, 532.48) at 1024 px. Omitting it displaces points ~25-30 mm laterally.
-# 2. EMISSION-PASS GAIN. depth/normals/segid are EEVEE emission renders, and colour
-#    management multiplies them on write: R and G by 0.99213, B by 0.99213^2 (measured;
-#    identical ratios in depth.exr and segid.exr, constant across views and subjects).
-#    Uncorrected, depth reads 0.8% short: 11 mm at 1.35 m, 18 mm at 2.2 m.
-CAMERA_SHIFT = (-0.05, 0.02)
-EMISSION_GAIN = np.array([0.99213, 0.99213, 0.99213 ** 2])
-
-
-def unproject_corrected(Z_true, meta):
-    """Planar depth (metres, gain-corrected) -> world mm, with the lens shift applied."""
-    K = np.asarray(meta["K"], np.float64)
-    c2w = np.asarray(meta["cam_to_world"], np.float64)
-    H, W = Z_true.shape
-    S = max(W, H)
-    cx, cy = W / 2.0 - CAMERA_SHIFT[0] * S, H / 2.0 + CAMERA_SHIFT[1] * S
-    u, v = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
-    cam = np.stack([(u - cx) / K[0, 0] * Z_true, -(v - cy) / K[1, 1] * Z_true, -Z_true], -1)
-    return (cam @ c2w[:3, :3].T + c2w[:3, 3]) * 1000.0
+# ── camera model: see scripts/training/camera_model.py for what meta.json omits ──
+CAMERA_SHIFT = cm.CAMERA_SHIFT
+EMISSION_GAIN = cm.EMISSION_GAIN
+unproject_corrected = cm.unproject
 
 
 LEGACY_UNPROJECT = False     # --legacy: reproduce the buffer gbuf_pos1024 was trained on
@@ -154,86 +121,6 @@ def list_views(args):
     out = []
     for s in subs:
         out += sorted(d for d in (root / s).glob("v*") if (d / "meta.json").exists())
-    return out
-
-
-# ── Cycles BOX projection (svm_node_tex_image_box) ────────────────────────────
-def box_weights(N, blend=BLEND):
-    A = np.abs(N)
-    A = A / np.maximum(A.sum(-1, keepdims=True), 1e-12)
-    x, y, z = A[..., 0], A[..., 1], A[..., 2]
-    limit = 0.5 * (1.0 + blend)
-    w = np.zeros_like(A)
-    cx = (x > limit * (x + y)) & (x > limit * (x + z))
-    cy = ~cx & (y > limit * (x + y)) & (y > limit * (y + z))
-    cz = ~cx & ~cy & (z > limit * (x + z)) & (z > limit * (y + z))
-    w[cx, 0] = 1.0
-    w[cy, 1] = 1.0
-    w[cz, 2] = 1.0
-    rest = ~(cx | cy | cz)
-    sat = lambda t: np.clip(t, 0.0, 1.0)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        m1 = rest & (z < (1 - limit) * (y + x))
-        m2 = rest & ~m1 & (x < (1 - limit) * (y + z))
-        m3 = rest & ~m1 & ~m2 & (y < (1 - limit) * (x + z))
-        m4 = rest & ~m1 & ~m2 & ~m3
-        t = sat((x / (x + y) - 0.5 * (1 - blend)) / blend); w[m1, 0] = t[m1]; w[m1, 1] = 1 - t[m1]
-        t = sat((y / (y + z) - 0.5 * (1 - blend)) / blend); w[m2, 1] = t[m2]; w[m2, 2] = 1 - t[m2]
-        t = sat((x / (x + z) - 0.5 * (1 - blend)) / blend); w[m3, 0] = t[m3]; w[m3, 2] = 1 - t[m3]
-        for k, c in enumerate((x, y, z)):
-            w[m4, k] = (((2 - limit) * c + (limit - 1)) / (2 * limit - 1))[m4]
-    return np.nan_to_num(w)
-
-
-# uv source axes per projection axis, as in Cycles: X->(y,z)  Y->(x,z)  Z->(y,x)
-AXIS_UV = {0: (1, 2), 1: (0, 2), 2: (1, 0)}
-# Cycles flips u by the SIGN of the normal: X flips when N.x<0, Y when N.y>0, Z when N.z>0
-CYCLES_FLIP_U = {0: lambda s: s < 0, 1: lambda s: s > 0, 2: lambda s: s > 0}
-
-
-def sample_wrap(img, u, v):
-    """Bilinear REPEAT sampling. Blender images have v=0 at the BOTTOM row."""
-    H, W = img.shape[:2]
-    x = np.mod(u, 1.0) * W - 0.5
-    y = (1.0 - np.mod(v, 1.0)) * H - 0.5
-    x0 = np.floor(x).astype(np.int64)
-    y0 = np.floor(y).astype(np.int64)
-    fx, fy = x - x0, y - y0
-    x0 %= W; y0 %= H
-    x1, y1 = (x0 + 1) % W, (y0 + 1) % H
-    return ((img[y0, x0] * (1 - fx) + img[y0, x1] * fx) * (1 - fy)
-            + (img[y1, x0] * (1 - fx) + img[y1, x1] * fx) * fy)
-
-
-def project_axis(img, P_mm, N, axis, swap=False, fu=False, fv=False, cycles=False,
-                 tex_mm=TEX_MM):
-    co = P_mm / tex_mm
-    b, c = AXIS_UV[axis]
-    u, v = co[..., b], co[..., c]
-    if swap:
-        u, v = v, u
-    if cycles:
-        u = np.where(CYCLES_FLIP_U[axis](N[..., axis]), 1.0 - u, u)
-    else:
-        if fu: u = -u
-        if fv: v = -v
-    return sample_wrap(img, u, v)
-
-
-def box_project(img, P_mm, N, conv=None, tex_mm=TEX_MM):
-    """Full blended projection. conv=None → Cycles-exact; else {axis:(swap,fu,fv)}."""
-    w = box_weights(N)
-    out = np.zeros(P_mm.shape[:-1], dtype=np.float64)
-    for a in range(3):
-        m = w[..., a] > 0
-        if not m.any():
-            continue
-        if conv is None:
-            val = project_axis(img, P_mm[m], N[m], a, cycles=True, tex_mm=tex_mm)
-        else:
-            s, fu, fv = conv[a]
-            val = project_axis(img, P_mm[m], N[m], a, s, fu, fv, tex_mm=tex_mm)
-        out[m] += w[m, a] * val
     return out
 
 
@@ -423,11 +310,33 @@ def cmd_oracle(args):
         print(row)
     print("   " + f"{'POOLED':16}" + "".join(f"{pooled[t].r:>+16.3f}" for t in tags))
 
+    # Registration and predictive strength are separate questions. A tiny r can still be
+    # a certain detection: the blind search picking Cycles' exact variant in every large
+    # region, a zero null, and decay under added position noise cannot happen by chance.
     rc, rn = pooled["cycles"].r, pooled["null+half_tile"].r
-    print(f"\nVERDICT oracle: r(cycles)={rc:+.3f}  r(null)={rn:+.3f}  "
-          + ("-> texture IS recoverable from the reconstructed position"
-             if rc > 0.3 and abs(rn) < 0.1 else
-             "-> texture NOT recoverable at this precision (or projection mismatch — see search)"))
+    noise_r = [pooled[f"noise{s:g}mm"].r for s in sorted(args.noise_mm)]
+    big = wins = 0
+    for (cls_, a, sg, vi), c in search.items():
+        if vi != 0 or c.n < 20000:
+            continue
+        rs = np.nan_to_num([search[(cls_, a, sg, k)].r if (cls_, a, sg, k) in search else np.nan
+                            for k in range(8)], nan=-9)
+        big += 1
+        wins += int(int(np.argmax(rs)) == variants.index((0, int(CYCLES_FLIP_U[a](sg)), 0)))
+    registered = (abs(rn) < 0.02 and rc > 0.02 and big > 0 and wins >= 0.8 * big
+                  and (not noise_r or noise_r[-1] < 0.5 * rc))
+    print(f"\nconvention search: Cycles' own variant wins {wins}/{big} single-texture regions "
+          f"with n >= 20000 (chance 1/8 each)")
+    print("position-noise decay: " + " -> ".join(f"{r:+.3f}" for r in [rc] + noise_r))
+    if registered and rc >= 0.3:
+        v = "texture is registered to the GT AND strongly predictive of its fine detail"
+    elif registered:
+        v = (f"texture IS registered to the GT (all controls pass) but only WEAKLY predictive "
+             f"with this proxy (r^2 = {rc * rc * 100:.2f}% of fine-detail variance)")
+    else:
+        v = ("no registered texture signal — check geometry, tex_mm, and that these are the "
+             "textures the dataset was rendered with")
+    print(f"VERDICT oracle: r(cycles)={rc:+.3f}  r(null)={rn:+.3f} -> {v}")
 
 
 # ── registration ──────────────────────────────────────────────────────────────
@@ -438,17 +347,7 @@ def project_to(Pmm, meta, W=1024, H=1024):
     wrong-but-consistent camera makes that camera look self-consistent, because it
     reprojects its own reconstruction onto itself.
     """
-    c2w = np.asarray(meta["cam_to_world"], np.float64)
-    K = np.asarray(meta["K"], np.float64)
-    R, t = c2w[:3, :3], c2w[:3, 3]
-    cam = (Pmm / 1000.0 - t) @ R            # world -> camera (R orthonormal)
-    Z = -cam[..., 2]
-    S = max(W, H)                           # lens shift + pixel centres at index + 0.5
-    cx, cy, off = W / 2.0 - CAMERA_SHIFT[0] * S, H / 2.0 + CAMERA_SHIFT[1] * S, 0.5
-    with np.errstate(divide="ignore", invalid="ignore"):
-        u = cx + K[0, 0] * cam[..., 0] / Z - off
-        v = cy - K[1, 1] * cam[..., 1] / Z - off
-    return u, v, Z
+    return cm.project(Pmm, meta, W, H)
 
 
 def bilinear(img, u, v):

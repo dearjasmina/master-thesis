@@ -91,6 +91,8 @@ def parse_args():
                    help="Fourier bands on the 'position' buffer (0 = raw XYZ only). "
                         "Changes the input channel count, so evaluation must use the "
                         "same value.")
+    p.add_argument("--tex-dir", default=None,
+                   help="texture tiles for the 'texture' buffer (must be the rendering tiles)")
     p.add_argument("--num-workers", type=int, default=None)
     p.add_argument("--subjects", default=None,
                    help="comma list of subject ids to train on, ignoring the split (overfit test)")
@@ -122,6 +124,7 @@ def build_config(args):
     if args.normals_space: c.data.normals_space = args.normals_space
     if args.input_buffers: c.data.input_buffers = [b.strip() for b in args.input_buffers.split(",") if b.strip()]
     if args.position_bands is not None: c.data.position_bands = args.position_bands
+    if args.tex_dir:       c.data.tex_dir = args.tex_dir
     if args.num_workers is not None: c.data.num_workers = args.num_workers
     if args.subjects:      c.data.subjects = [s.strip() for s in args.subjects.split(",") if s.strip()]
     if args.max_subjects is not None: c.data.max_subjects = args.max_subjects

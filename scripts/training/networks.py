@@ -30,6 +30,27 @@ def weights_init(m):
         nn.init.constant_(m.bias.data, 0.0)
 
 
+def up_layers(in_ch, out_ch, mode):
+    """2x upsampling. 'transpose' is original pix2pixHD; 'resize' removes its checkerboard.
+
+    ConvTranspose2d(k=3, s=2) overlaps its kernel unevenly, so it stamps a stride-periodic
+    pattern; stacked five times (LocalEnhancer at 1024) that is a lattice with a 32 px
+    period and harmonics. Measured in every model trained so far: 4.9% (full1024) and 4.5%
+    (gbuf_pos1024) of high-frequency power sits on it, against 1.5% in the GT. Nearest
+    upsampling followed by a convolution has uniform overlap and cannot produce it
+    (Odena, Dumoulin & Olah 2016, "Deconvolution and Checkerboard Artifacts").
+
+    'transpose' keeps one module in the same Sequential position, so existing checkpoints
+    load unchanged.
+    """
+    if mode == "transpose":
+        return [nn.ConvTranspose2d(in_ch, out_ch, 3, stride=2, padding=1, output_padding=1)]
+    if mode == "resize":
+        return [nn.Upsample(scale_factor=2, mode="nearest"),
+                nn.ReflectionPad2d(1), nn.Conv2d(in_ch, out_ch, 3)]
+    raise ValueError(f"unknown upsample mode '{mode}'")
+
+
 # ── Generator ─────────────────────────────────────────────────────────────────
 class ResnetBlock(nn.Module):
     def __init__(self, dim, norm_layer, activation=nn.ReLU(True)):
@@ -44,7 +65,7 @@ class ResnetBlock(nn.Module):
 
 class GlobalGenerator(nn.Module):
     def __init__(self, input_nc, output_nc, ngf=32, n_downsampling=4, n_blocks=9,
-                 norm_layer=nn.InstanceNorm2d):
+                 norm_layer=nn.InstanceNorm2d, upsample="transpose"):
         super().__init__()
         act = nn.ReLU(True)
         model = [nn.ReflectionPad2d(3), nn.Conv2d(input_nc, ngf, 7), norm_layer(ngf), act]
@@ -57,9 +78,7 @@ class GlobalGenerator(nn.Module):
             model += [ResnetBlock(ngf * m, norm_layer, act)]
         for i in range(n_downsampling):
             m = 2 ** (n_downsampling - i)
-            model += [nn.ConvTranspose2d(ngf * m, ngf * m // 2, 3, stride=2, padding=1,
-                                         output_padding=1),
-                      norm_layer(ngf * m // 2), act]
+            model += up_layers(ngf * m, ngf * m // 2, upsample) + [norm_layer(ngf * m // 2), act]
         model += [nn.ReflectionPad2d(3), nn.Conv2d(ngf, output_nc, 7), nn.Tanh()]
         self.model = nn.Sequential(*model)
 
@@ -71,7 +90,7 @@ class LocalEnhancer(nn.Module):
     """Full-res enhancer wrapping a half-res GlobalGenerator (pix2pixHD, for 1024²)."""
     def __init__(self, input_nc, output_nc, ngf=32, n_downsample_global=4,
                  n_blocks_global=9, n_local_enhancers=1, n_blocks_local=3,
-                 norm_layer=nn.InstanceNorm2d):
+                 norm_layer=nn.InstanceNorm2d, upsample="transpose"):
         super().__init__()
         self.n_local_enhancers = n_local_enhancers
         act = nn.ReLU(True)
@@ -79,7 +98,7 @@ class LocalEnhancer(nn.Module):
         # Coarse global generator runs at 1/2 resolution; we reuse its feature trunk.
         ngf_global = ngf * (2 ** n_local_enhancers)
         global_net = GlobalGenerator(input_nc, output_nc, ngf_global, n_downsample_global,
-                                     n_blocks_global, norm_layer).model
+                                     n_blocks_global, norm_layer, upsample).model
         # Drop the final (pad, conv, tanh) so we keep its last feature map.
         self.model = nn.Sequential(*list(global_net)[:-3])
 
@@ -90,8 +109,7 @@ class LocalEnhancer(nn.Module):
             up = []
             for _ in range(n_blocks_local):
                 up += [ResnetBlock(ngf_l * 2, norm_layer, act)]
-            up += [nn.ConvTranspose2d(ngf_l * 2, ngf_l, 3, stride=2, padding=1, output_padding=1),
-                   norm_layer(ngf_l), act]
+            up += up_layers(ngf_l * 2, ngf_l, upsample) + [norm_layer(ngf_l), act]
             if n == n_local_enhancers:
                 up += [nn.ReflectionPad2d(3), nn.Conv2d(ngf_l, output_nc, 7), nn.Tanh()]
             setattr(self, f"model{n}_1", nn.Sequential(*down))
@@ -114,12 +132,14 @@ class LocalEnhancer(nn.Module):
 def define_G(cfg):
     norm_layer = get_norm_layer(cfg.model.norm)
     m = cfg.model
+    up = getattr(m, "upsample", "transpose")
     if m.netG == "global":
         net = GlobalGenerator(cfg.input_nc(), m.output_nc, m.ngf,
-                              m.n_downsample_global, m.n_blocks_global, norm_layer)
+                              m.n_downsample_global, m.n_blocks_global, norm_layer, up)
     elif m.netG == "local":
         net = LocalEnhancer(cfg.input_nc(), m.output_nc, m.ngf, m.n_downsample_global,
-                            m.n_blocks_global, m.n_local_enhancers, m.n_blocks_local, norm_layer)
+                            m.n_blocks_global, m.n_local_enhancers, m.n_blocks_local,
+                            norm_layer, up)
     else:
         raise ValueError(f"unknown netG '{m.netG}'")
     net.apply(weights_init)
