@@ -251,8 +251,8 @@ class Config:
 # evaluate.py, infer.py and eval_common.py used to hardcode this separately, so adding
 # a preset made config.preset() accept it while the CLIs still rejected it — which is
 # exactly how rgb_1024 failed after being added correctly.
-PRESET_NAMES = ("proto512", "full1024", "rgb_1024", "gbuf_pos1024", "preflight_tex",
-                "preflight_ctrl", "preflight_glint", "rgb_only", "overfit")
+PRESET_NAMES = ("proto512", "full1024", "rgb_1024", "gbuf_pos1024", "full1024_glint",
+                "preflight_tex", "preflight_ctrl", "preflight_glint", "rgb_only", "overfit")
 
 
 def preset(name: str) -> Config:
@@ -312,6 +312,24 @@ def preset(name: str) -> Config:
         c = preset("full1024")
         c.data.input_buffers = ["seg_rgb", "depth", "normals", "segid", "position"]
         c.train.output_dir = "results/training_runs/gbuf_pos1024"
+        return c
+    if name == "full1024_glint":
+        # The full retrain chosen from pre-flight #3 (thesis_context.md §4b): the full1024
+        # training schedule on the full dataset, with the recipe that registered the most
+        # vessel detail on held-out views —
+        #   inputs   full1024's 8 ch + `texture` (7) + `glint` (2) = 17 ch
+        #   upsample resize (removes the ConvTranspose2d checkerboard)
+        #   losses   pix2pixHD objective: no L1, VGG 10, FM 10, GAN 1
+        # Same batch 1 x grad_accum 4 x 4 GPUs and 61 epochs as full1024, so the two runs
+        # differ only in this recipe.
+        c = preset("full1024")
+        c.model.upsample = "resize"
+        c.data.input_buffers = ["seg_rgb", "depth", "normals", "segid", "texture", "glint"]
+        c.loss.w_l1 = 0.0
+        c.loss.w_vgg = 10.0
+        c.data.num_workers = 8
+        c.train.epochs = 61
+        c.train.output_dir = "results/training_runs/gbuf_glint"
         return c
     if name in ("preflight_tex", "preflight_ctrl"):
         # Pre-flight for the last full retrain (scripts/analysis/preflight.py). Two runs on

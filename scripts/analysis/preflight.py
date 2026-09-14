@@ -596,7 +596,7 @@ def main():
     p.add_argument("--data-root", required=True)
     p.add_argument("--subject", required=True)
     p.add_argument("--view", default="v02")
-    p.add_argument("--preset", default="preflight_tex", choices=["preflight_tex", "preflight_glint"])
+    p.add_argument("--preset", default="preflight_tex", choices=["preflight_tex", "preflight_glint", "full1024_glint"])
     p.add_argument("--mesh-dir", default="data/meshes")
     p.add_argument("--tex-dir", default="data/renders/textures/tissue")
     p.add_argument("--a4-views", type=int, default=10)
