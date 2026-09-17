@@ -63,6 +63,7 @@ _TRAIN_DIR = Path(__file__).resolve().parents[1] / "training"
 if str(_TRAIN_DIR) not in sys.path:
     sys.path.insert(0, str(_TRAIN_DIR))
 from exr import read_render_exr        # noqa: E402
+import camera_model as cm                # noqa: E402
 
 
 def _cv(c2w):
@@ -74,13 +75,14 @@ def _cv(c2w):
 
 
 def load_depth(view_dir):
-    """Metric depth for a view, from depth.exr if present else render.exr."""
+    """Metric depth for a view, from depth.exr if present else render.exr.
+
+    depth.exr is an EEVEE emission pass, so colour management scaled it on write; the gain
+    must be removed or every reprojection lands 11-18 mm deep (camera_model.py).
+    """
     d = Path(view_dir) / "depth.exr"
     if d.exists():
-        got = read_render_exr(str(d), want=("image",))
-        a = got.get("image")
-        if a is not None:
-            return np.asarray(a)[..., 0].astype(np.float32)
+        return cm.depth_m(Path(view_dir)).astype(np.float32)
     r = Path(view_dir) / "render.exr"
     if r.exists():
         got = read_render_exr(str(r), want=("depth",))
@@ -98,13 +100,18 @@ def warp(img_i, depth_i, meta_i, depth_j, meta_j, depth_tol_rel=0.02):
     Kj = np.array(meta_j["K"], dtype=np.float64).reshape(3, 3)
     Ci, Cj = _cv(meta_i["cam_to_world"]), _cv(meta_j["cam_to_world"])
 
+    # meta.json's K omits the camera's lens shift, so its principal point is wrong by
+    # (51.2, 20.5) px; with pixel centres at index + 0.5 this is the corrected model
+    # (camera_model.py). Before this fix corresponding pixels did not correspond, which is
+    # why the GT floor came out at an implausible 11.5-15.4 dB.
+    cx, cy = cm.principal_point(W, H)
     uu, vv = np.meshgrid(np.arange(W), np.arange(H))
     z = depth_i.astype(np.float64)
     valid = np.isfinite(z) & (z > 1e-6)
 
     # unproject i -> camera coords -> world
-    x = (uu - Ki[0, 2]) * z / Ki[0, 0]
-    y = (vv - Ki[1, 2]) * z / Ki[1, 1]
+    x = (uu + 0.5 - cx) * z / Ki[0, 0]
+    y = (vv + 0.5 - cy) * z / Ki[1, 1]
     pc = np.stack([x, y, z], -1)
     pw = pc @ Ci[:3, :3].T + Ci[:3, 3]
 
@@ -114,8 +121,8 @@ def warp(img_i, depth_i, meta_i, depth_j, meta_j, depth_tol_rel=0.02):
     zj = pj[..., 2]
     valid &= zj > 1e-6                       # in front of camera j
 
-    uj = Kj[0, 0] * pj[..., 0] / np.where(zj == 0, 1, zj) + Kj[0, 2]
-    vj = Kj[1, 1] * pj[..., 1] / np.where(zj == 0, 1, zj) + Kj[1, 2]
+    uj = Kj[0, 0] * pj[..., 0] / np.where(zj == 0, 1, zj) + cx - 0.5
+    vj = Kj[1, 1] * pj[..., 1] / np.where(zj == 0, 1, zj) + cy - 0.5
     ui = np.round(uj).astype(np.int64)
     vi = np.round(vj).astype(np.int64)
     valid &= (ui >= 0) & (ui < W) & (vi >= 0) & (vi < H)

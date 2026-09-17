@@ -122,6 +122,10 @@ def main():
     ap.add_argument("--cycles-log", default=None,
                     help="a logs/gpu*.log from dataset generation, parsed for timing")
     ap.add_argument("--views-per-subject", type=int, default=20)
+    ap.add_argument("--prep-views", type=int, default=8,
+                    help="views to time INPUT PREPARATION on (0 = skip). Presets with "
+                         "derived buffers (texture/glint) build their input in numpy on "
+                         "the CPU, which dominates the per-view cost.")
     ap.add_argument("--train-gpu-hours", type=float, default=None,
                     help="total GPU-hours spent training, for the break-even estimate")
     args = ap.parse_args()
@@ -138,6 +142,27 @@ def main():
     if not net:
         raise SystemExit("no batch size fitted in memory")
     best = min(r["ms_per_frame"] for r in net)
+
+    # time_generator() measures the forward pass only. That is the whole story for the
+    # G-buffer presets, whose inputs are the EEVEE passes the pipeline renders anyway —
+    # but `texture`/`glint` are computed per view in numpy, and then the forward pass is
+    # no longer the cost. Measure it so the quoted speed-up is end to end.
+    prep_ms = None
+    if args.prep_views > 0:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "training"))
+        import infer as I
+        from eval_common import view_dir_of, sample_indices
+        ds = open_dataset(cfg, args.split)
+        ts = []
+        for i in sample_indices(len(ds), args.prep_views):
+            vd = view_dir_of(ds, i)
+            t0 = time.perf_counter()
+            I.load_input(vd, cfg, I.build_segid_lut(vd.parent))
+            ts.append((time.perf_counter() - t0) * 1000.0)
+        prep_ms = float(np.median(ts))
+        print(f"\ninput preparation: {prep_ms:8.1f} ms/view  (median of {len(ts)}, one CPU "
+              f"thread, buffers={cfg.data.input_buffers})")
 
     # ── Cycles reference ──
     cyc = args.cycles_sec_per_frame
@@ -157,6 +182,8 @@ def main():
         "gpu_name": torch.cuda.get_device_name(0) if device.type == "cuda" else None,
         "network": net,
         "best_ms_per_frame": best,
+        "input_prep_ms_per_view": prep_ms,
+        "total_ms_per_frame": best + (prep_ms or 0.0),
     }
 
     if cyc:
@@ -164,9 +191,15 @@ def main():
         report["cycles_sec_per_frame"] = cyc
         report["cycles_source"] = cyc_source
         report["speedup_x"] = round(speedup, 1)
+        total = best + (prep_ms or 0.0)
+        report["speedup_x_end_to_end"] = round((cyc * 1000.0) / total, 1)
         print(f"\n  Cycles      : {cyc*1000:10.1f} ms/frame")
-        print(f"  network     : {best:10.1f} ms/frame")
-        print(f"  SPEED-UP    : {speedup:10.1f}x")
+        print(f"  network     : {best:10.1f} ms/frame   -> {speedup:8.1f}x  (forward pass only)")
+        if prep_ms:
+            print(f"  + input prep: {prep_ms:10.1f} ms/view")
+            print(f"  END TO END  : {total:10.1f} ms/frame   -> {(cyc*1000.0)/total:8.1f}x  <- quote this one")
+        else:
+            print(f"  SPEED-UP    : {speedup:10.1f}x")
 
         if args.train_gpu_hours:
             # Amortisation: training is a one-off cost paid in GPU-hours; each rendered
