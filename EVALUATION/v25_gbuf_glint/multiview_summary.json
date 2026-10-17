@@ -1,0 +1,20 @@
+{
+  "n_pairs": 35,
+  "mean_covisible_frac": 0.04788,
+  "reproj_psnr_generated": {
+    "mean": 15.456478439406546,
+    "ci95": [
+      14.671132225447792,
+      16.196084878817427
+    ]
+  },
+  "reproj_psnr_ground_truth": {
+    "mean": 15.415292186354337,
+    "ci95": [
+      14.611108160464031,
+      16.178294480777268
+    ]
+  },
+  "consistency_gap_db": -0.041186253052208244,
+  "interpretation": "GT reprojection PSNR is the FLOOR (interpolation, depth quantisation and genuinely view-dependent shading). The gap is the inconsistency the model ADDS. A gap near 0 dB means the model is as multi-view consistent as the renderer it imitates; a large gap means it invents per-view detail, which would appear as flicker under camera motion."
+}

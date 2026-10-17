@@ -1,0 +1,12 @@
+{
+  "implementation": "in-repo fallback (torchvision Inception-v3, bilinear 299)",
+  "fid": 6.257479656276473,
+  "kid_mean": 0.00010732889495557174,
+  "kid_std": 0.0015807030722498894,
+  "kid_subset_size": 100,
+  "note": "NOT numerically comparable to published torch-fidelity/TF numbers; use only for comparing models evaluated by this same code path.",
+  "n_images": 1920,
+  "split": "test",
+  "checkpoint": "results/training_runs/gbuf_glint/checkpoints/epoch_060.pt",
+  "target": "preview_png"
+}

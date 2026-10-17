@@ -1,0 +1,46 @@
+{
+  "checkpoint": "results/training_runs/gbuf_glint/checkpoints/epoch_060.pt",
+  "device": "cuda",
+  "gpu_name": "NVIDIA L4",
+  "network": [
+    {
+      "batch": 1,
+      "resolution": 1024,
+      "ms_per_batch": 100.005,
+      "ms_per_frame": 100.005,
+      "frames_per_sec": 10.0,
+      "peak_mem_MiB": 1425.2
+    },
+    {
+      "batch": 2,
+      "resolution": 1024,
+      "ms_per_batch": 196.696,
+      "ms_per_frame": 98.348,
+      "frames_per_sec": 10.17,
+      "peak_mem_MiB": 2149.2
+    },
+    {
+      "batch": 4,
+      "resolution": 1024,
+      "ms_per_batch": 399.882,
+      "ms_per_frame": 99.97,
+      "frames_per_sec": 10.0,
+      "peak_mem_MiB": 3601.2
+    },
+    {
+      "batch": 8,
+      "resolution": 1024,
+      "ms_per_batch": 802.029,
+      "ms_per_frame": 100.254,
+      "frames_per_sec": 9.97,
+      "peak_mem_MiB": 6505.2
+    }
+  ],
+  "best_ms_per_frame": 98.348,
+  "input_prep_ms_per_view": 2251.4612384838983,
+  "total_ms_per_frame": 2349.8092384838983,
+  "cycles_sec_per_frame": 53.025,
+  "cycles_source": "supplied",
+  "speedup_x": 539.2,
+  "speedup_x_end_to_end": 22.6
+}

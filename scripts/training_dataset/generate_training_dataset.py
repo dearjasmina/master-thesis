@@ -80,6 +80,14 @@ def get_args():
     ap.add_argument("--dataset",
         default="/Users/jasminavulovic/Documents/Masters/TEZAAA/Totalsegmentator_dataset_v201")
     ap.add_argument("--output_dir", default="data/training_dataset")
+    ap.add_argument("--mesh_dir", default="data/meshes",
+                    help="base dir holding {subject}/{tissue}.obj (demo runs pass a "
+                         "per-run mesh dir so the live demo never touches data/meshes)")
+    ap.add_argument("--gbuffer_only", action="store_true",
+                    help="skip the Cycles render.exr + rgb_preview.png block — only the "
+                         "cheap EEVEE seg/depth/normals/segid G-buffers + meta.json are "
+                         "written. Everything else (seed, jitter, materials, lights) is "
+                         "unchanged; the RNG draw order does not change.")
     ap.add_argument("--spp",    type=int, default=384)
     ap.add_argument("--size",   type=int, default=1024)
     ap.add_argument("--device", default="CPU", choices=["CPU", "GPU"])
@@ -378,7 +386,7 @@ def _track_to(obj, target_xyz):
 def main():
     args = get_args()
 
-    mesh_dir   = Path("data/meshes") / args.subject
+    mesh_dir   = Path(args.mesh_dir) / args.subject
     out_root   = Path(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
     subj_dir   = out_root / args.subject
@@ -667,24 +675,25 @@ def main():
             # from the format enum, so the G-buffers are written as SEPARATE files below
             # via the EEVEE pass materials (version-independent, no compositor needed).
             scene = bpy.context.scene
-            scene.render.image_settings.file_format = 'OPEN_EXR'
-            scene.render.image_settings.color_depth = '32'
-            exr_path = view_dir / "render.exr"
-            scene.render.filepath = str(exr_path)
-            bpy.ops.render.render(write_still=True)
-            print(f"  render → {exr_path}")
+            if not args.gbuffer_only:
+                scene.render.image_settings.file_format = 'OPEN_EXR'
+                scene.render.image_settings.color_depth = '32'
+                exr_path = view_dir / "render.exr"
+                scene.render.filepath = str(exr_path)
+                bpy.ops.render.render(write_still=True)
+                print(f"  render → {exr_path}")
 
-            # Save tone-mapped PNG from the still-live render buffer (no 2nd Cycles render).
-            render_img = bpy.data.images.get('Render Result')
-            preview_path = view_dir / "rgb_preview.png"
-            try:
-                if render_img:
-                    scene.render.image_settings.file_format = 'PNG'
-                    scene.render.image_settings.color_mode  = 'RGB'
-                    render_img.save_render(filepath=str(preview_path), scene=scene)
-                    print(f"  preview → {preview_path}")
-            except Exception as e:
-                print(f"  [warn] preview PNG failed: {e}")
+                # Save tone-mapped PNG from the still-live render buffer (no 2nd Cycles render).
+                render_img = bpy.data.images.get('Render Result')
+                preview_path = view_dir / "rgb_preview.png"
+                try:
+                    if render_img:
+                        scene.render.image_settings.file_format = 'PNG'
+                        scene.render.image_settings.color_mode  = 'RGB'
+                        render_img.save_render(filepath=str(preview_path), scene=scene)
+                        print(f"  preview → {preview_path}")
+                except Exception as e:
+                    print(f"  [warn] preview PNG failed: {e}")
 
             # --- G-buffer passes → separate single-layer EXRs (depth/normals/segid) ---
             # Fast EEVEE emission renders from the same camera. render_pass restores the

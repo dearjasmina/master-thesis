@@ -50,3 +50,10 @@ Thumbs.db
 one_pair_tracker.md
 additional_context.md
 context.md
+
+# ── Local demo assets (too large for GitHub) ─────────────────────────────────
+*.pt
+results/training_runs/*/checkpoints/
+data/training_dataset_v25/
+demo/runs/
+demo/research_3d/out/

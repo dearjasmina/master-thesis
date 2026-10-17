@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CT → Photoreal</title>
+<link rel="stylesheet" href="static/css/app.css">
+<script>
+  // Console-error capture for headless screenshot/verification tooling (e.g. a CDP
+  // script reading window.__errs) — purely diagnostic, no effect on the app itself.
+  window.__errs = [];
+  window.addEventListener("error", (e) => window.__errs.push(String(e.error && e.error.stack || e.message)));
+  window.addEventListener("unhandledrejection", (e) => window.__errs.push("unhandledrejection: " + String(e.reason && e.reason.stack || e.reason)));
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div class="wordmark"><b>CT</b> → <b>Photoreal</b></div>
+    <div class="spacer"></div>
+    <div class="model-chip" id="modelChip">
+      <span class="status-dot loading" id="modelDot"></span>
+      <span id="modelChipText">loading…</span>
+    </div>
+    <button class="btn-ghost" id="openDrawerBtn">Recent runs</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <h1>A CT scan in, twenty photoreal views out.</h1>
+    <p class="pitch">Cycles-quality anatomy renders in milliseconds per view — CT → organ meshes → cheap G-buffers → a trained network, live.</p>
+    <div class="stepper" id="stepper"></div>
+  </section>
+
+  <div class="section-title"><h2>Choose a CT</h2><span class="hint">a TotalSegmentator subject folder, or a ct.nii.gz</span></div>
+  <div class="card dropcard" id="dropcard">
+    <div class="choose-row">
+      <input type="text" class="path-field" id="pathField" spellcheck="false" autocomplete="off"
+             placeholder="/path/to/Totalsegmentator_dataset_v201/s0006">
+      <button class="btn btn-secondary" id="browseNativeBtn">Browse…</button>
+      <button class="btn btn-secondary" id="browseAppBtn">Browse in app</button>
+    </div>
+    <div class="chips" id="chipsRow">
+      <span class="chip-label">held-out test subjects:</span>
+    </div>
+    <div class="error-banner" id="inspectError"></div>
+  </div>
+
+  <div class="card ct-card" id="ctCard"></div>
+
+  <div class="section-title" style="margin-top:56px;">
+    <h2>Pipeline</h2>
+    <span class="spacer" style="flex:1"></span>
+    <label class="follow-toggle"><button class="toggle on" id="followToggle" type="button"></button> follow along</label>
+  </div>
+  <div class="timeline" id="timeline"></div>
+
+  <div class="section-title" id="resultsTitle" style="display:none;"><h2>Results</h2></div>
+  <div class="card results-hero" id="resultsHero" style="display:none;">
+    <div class="hero-render-well" id="heroWell"><img id="heroImg" alt="hero render"></div>
+    <div class="hero-caption" id="heroCaption"></div>
+  </div>
+
+  <div class="gallery-head" id="galleryHead" style="display:none;">
+    <h3 style="font-size:16px;">Orbit gallery</h3>
+    <div class="segctl" id="gallerySeg">
+      <button data-mode="output" class="active">Output</button>
+      <button data-mode="seg">Seg</button>
+      <button data-mode="normals">Normals</button>
+      <button data-mode="glint">Glints</button>
+    </div>
+  </div>
+  <div id="galleryBody" style="display:none;"></div>
+
+  <div class="card summary-card" id="summaryCard" style="display:none;"></div>
+
+</main>
+
+<footer class="foot">CT → Photoreal · local demo · runs entirely offline</footer>
+
+<!-- lightbox -->
+<div class="lightbox" id="lightbox">
+  <div class="lightbox-backdrop" id="lightboxBackdrop"></div>
+  <div class="lightbox-panel">
+    <div class="lightbox-top">
+      <div class="lightbox-tabs" id="lightboxTabs">
+        <button data-tab="render" class="active">Neural render</button>
+        <button data-tab="inputs">Inputs</button>
+        <button data-tab="compare">Compare with Cycles</button>
+      </div>
+      <button class="lightbox-close" id="lightboxClose">✕</button>
+    </div>
+    <div class="lightbox-body" id="lightboxBody">
+      <button class="lightbox-nav prev" id="lbPrev">‹</button>
+      <div id="lightboxContent" style="width:100%;"></div>
+      <button class="lightbox-nav next" id="lbNext">›</button>
+    </div>
+    <div class="lightbox-caption" id="lightboxCaption"></div>
+  </div>
+</div>
+
+<!-- browse-in-app modal -->
+<div class="modal-backdrop" id="browseModal">
+  <div class="modal">
+    <div class="modal-head"><h3>Browse for a CT</h3><button class="lightbox-close" id="browseModalClose">✕</button></div>
+    <div class="breadcrumb" id="browseBreadcrumb"></div>
+    <div class="modal-list" id="browseList"></div>
+  </div>
+</div>
+
+<!-- recent runs drawer -->
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-head"><h3>Recent runs</h3><button class="lightbox-close" id="drawerClose">✕</button></div>
+  <div class="drawer-list" id="drawerList"></div>
+</div>
+
+<div class="toast-stack" id="toastStack"></div>
+
+<script type="module" src="static/js/app.js"></script>
+</body>
+</html>
